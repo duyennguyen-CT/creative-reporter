@@ -57,6 +57,7 @@ def main():
 
     snap = json.loads(OUT_PATH.read_text()) if OUT_PATH.exists() else {}
     by_day = snap.get("by_day", {})
+    before = json.dumps(by_day, sort_keys=True)
 
     # Overwrite each day present in the new pull; keep all other days.
     for day, m in new.items():
@@ -65,6 +66,13 @@ def main():
     # Prune old days to keep the file small (dashboard only needs ~65 days back).
     cutoff = (datetime.date.today() - datetime.timedelta(days=KEEP_DAYS)).isoformat()
     by_day = {d: m for d, m in by_day.items() if d >= cutoff}
+
+    # No-op guard: if the install data is byte-for-byte identical, don't rewrite
+    # the file (avoids a daily timestamp-only "NO CHANGE" commit). Prints a
+    # sentinel the caller can grep to skip commit+push.
+    if json.dumps(by_day, sort_keys=True) == before:
+        print("UNCHANGED — install data identical, file not rewritten")
+        return
 
     days = sorted(by_day)
     out = {
