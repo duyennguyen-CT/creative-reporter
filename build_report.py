@@ -69,7 +69,7 @@ PRESETS = [
 ]
 DEFAULT_RANGE = "last_30d"
 
-FIELDS = ("ad_id,ad_name,spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,"
+FIELDS = ("ad_id,ad_name,campaign_name,spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,"
           "actions,video_thruplay_watched_actions")
 TOP_N = 25  # creatives per account, sorted by spend
 
@@ -140,6 +140,7 @@ def fetch_creatives(account_id, date_preset):
         rows.append({
             "id":          row.get("ad_id", ""),
             "name":        row.get("ad_name", ""),
+            "campaign":    row.get("campaign_name", ""),
             "spend":       spend,
             "impressions": impr,
             "reach":       reach,

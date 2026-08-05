@@ -55,6 +55,7 @@
   th.sorted::after { content: " ▾"; color: var(--accent); }
   tbody tr:hover { background: #faf9ff; }
   td.name { font-weight: 600; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+  td.campaign { text-align: left; color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .f-green { background: #dcfce7; color: var(--green); }
   .f-amber { background: #fef3c7; color: var(--amber); }
@@ -88,6 +89,8 @@
     <button class="ctl" id="btn-creative">By creative</button>
     <button class="ctl" id="btn-format">By format</button>
     <button class="ctl" id="btn-perad">Per ad</button>
+    <span style="flex:1"></span>
+    <button class="ctl" id="btn-campaign">+ Campaign</button>
   </div>
   <div id="panel"></div>
 
@@ -99,6 +102,7 @@ const CUR = "SGD";
 const SGD_TO_VND = 20337;  // exchange rate used for the VND columns
 let RAW = null, RANGES = {}, curRange = null;
 let DATA = null, activeIdx = 0, sortKey = "spend", sortDir = -1, viewMode = "creative";
+let showCampaign = false;  // Campaign column is collapsed by default (toggle to show)
 let AB = null;  // Airbridge MMP installs snapshot (docs/data/airbridge_installs.json)
 
 // --- Airbridge install override -----------------------------------------
@@ -201,8 +205,10 @@ function withRates(g) {
   const cpi = g.installs ? g.spend / g.installs : 0;
   const ctr = g.impressions ? g.clicks / g.impressions * 100 : 0;
   const formats = g._formats ? [...g._formats] : [];
+  const campaigns = g._campaigns ? [...g._campaigns].filter(Boolean) : [];
   const out = {
     ...g,
+    campaign: campaigns.length === 1 ? campaigns[0] : (campaigns.length > 1 ? "Nhiều chiến dịch" : (g.campaign || "—")),
     ctr,
     cpc: g.clicks ? g.spend / g.clicks : 0,
     cpm: g.impressions ? g.spend / g.impressions * 1000 : 0,
@@ -217,6 +223,7 @@ function withRates(g) {
     ...deltas(ctr, cpi, g.prev_impressions, g.prev_clicks, g.prev_spend, g.prev_installs),
   };
   delete out._formats;
+  delete out._campaigns;
   return out;
 }
 
@@ -226,13 +233,14 @@ function aggregateBy(creatives, keyFn) {
   creatives.forEach(c => {
     const key = keyFn(c);
     const g = map.get(key) || {name: key, ads: 0, spend: 0, impressions: 0, reach: 0, clicks: 0,
-      installs: 0, engagement: 0, video_3s: 0, thruplay: 0, prev_spend: 0, prev_impressions: 0, prev_clicks: 0, prev_installs: 0, _formats: new Set()};
+      installs: 0, engagement: 0, video_3s: 0, thruplay: 0, prev_spend: 0, prev_impressions: 0, prev_clicks: 0, prev_installs: 0, _formats: new Set(), _campaigns: new Set()};
     g.ads++; g.spend += c.spend; g.impressions += c.impressions; g.reach += c.reach;
     g.clicks += c.clicks; g.installs += (c.installs || 0); g.engagement += (c.engagement || 0);
     g.video_3s += (c.video_3s || 0); g.thruplay += (c.thruplay || 0);
     g.prev_spend += (c.prev_spend || 0); g.prev_impressions += (c.prev_impressions || 0);
     g.prev_clicks += (c.prev_clicks || 0); g.prev_installs += (c.prev_installs || 0);
     g._formats.add(c.format || "Other");
+    g._campaigns.add(c.campaign || "");
     map.set(key, g);
   });
   return [...map.values()].map(withRates);
@@ -246,7 +254,7 @@ function normalize(c) {
   const installs = c.installs || 0;
   const cpi = c.cpi != null ? c.cpi : (installs ? c.spend / installs : 0);
   const engagement = c.engagement || 0;
-  return {...c, ads: 1, installs, cpi, engagement, format: c.format || "Other",
+  return {...c, ads: 1, installs, cpi, engagement, format: c.format || "Other", campaign: c.campaign || "—",
     eng_rate: c.eng_rate != null ? c.eng_rate : (c.impressions ? engagement / c.impressions * 100 : 0),
     hook_rate: c.hook_rate != null ? c.hook_rate : (c.impressions ? (c.video_3s || 0) / c.impressions * 100 : 0),
     hold_rate: c.hold_rate != null ? c.hold_rate : (c.impressions ? (c.thruplay || 0) / c.impressions * 100 : 0),
@@ -423,6 +431,7 @@ function renderTabs() {
 function selectTab(i) { activeIdx = i; sortKey = "spend"; sortDir = -1; renderTabs(); renderPanel(); }
 function sortBy(k) { if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; } renderPanel(); }
 function setView(m) { viewMode = m; sortKey = "spend"; sortDir = -1; renderControls(); renderPanel(); }
+function toggleCampaign() { showCampaign = !showCampaign; renderControls(); renderPanel(); }
 
 const COLS = [
   {k: "name", label: "Creative"},
@@ -448,6 +457,9 @@ function renderControls() {
   document.getElementById("btn-creative").className = "ctl" + (viewMode === "creative" ? " active" : "");
   document.getElementById("btn-format").className = "ctl" + (viewMode === "format" ? " active" : "");
   document.getElementById("btn-perad").className = "ctl" + (viewMode === "ad" ? " active" : "");
+  const bc = document.getElementById("btn-campaign");
+  bc.className = "ctl" + (showCampaign ? " active" : "");
+  bc.textContent = showCampaign ? "✕ Campaign" : "+ Campaign";
 }
 
 // GROWTH accounts run app installs -> lead with Spend, Installs, CPI and drop
@@ -457,15 +469,23 @@ const COL_BY_KEY = Object.fromEntries(COLS.map(c => [c.k, c]));
 const GROWTH_ORDER = ["name", "format", "spend", "installs", "cpi_vnd", "spend_vnd",
   "impressions", "clicks", "ctr", "cpc", "cpm", "engagement", "eng_rate",
   "hook_rate", "hold_rate", "frequency"];
-function colsFor(acc) {
+// The campaign column is collapsible: hidden by default, prepended as the very
+// first column when the user toggles it on (to see which campaign a creative runs in).
+const CAMPAIGN_COL = {k: "campaign", label: "Campaign"};
+function baseCols(acc) {
   return (acc.group || "").toUpperCase() === "GROWTH"
     ? GROWTH_ORDER.map(k => COL_BY_KEY[k])
     : COLS;
 }
+function colsFor(acc) {
+  const base = baseCols(acc);
+  return showCampaign ? [CAMPAIGN_COL, ...base] : base;
+}
 
 // Columns for the format views: first column is the format, no separate Format col.
+// (Campaign isn't meaningful when grouping by format, so it's not shown here.)
 function formatColsFor(acc) {
-  return [{k: "name", label: "Format"}, ...colsFor(acc).filter(c => c.k !== "name" && c.k !== "format")];
+  return [{k: "name", label: "Format"}, ...baseCols(acc).filter(c => c.k !== "name" && c.k !== "format")];
 }
 
 // Build one <table>. When sortable, headers wire to sortBy and highlight sortKey.
@@ -477,6 +497,10 @@ function tableHTML(rows, cols, sortable) {
     if (c.k === "name") {
       const tag = r.ads > 1 ? `<span class="pill">×${r.ads} ads</span>` : "";
       return `<td class="name" title="${r.name}">${r.name}${tag}</td>`;
+    }
+    if (c.k === "campaign") {
+      const cp = r.campaign || "—";
+      return `<td class="campaign" title="${cp}">${cp}</td>`;
     }
     const val = c.f ? c.f(r[c.k]) : r[c.k];
     const badge = c.d ? deltaBadge(r[c.d], c.goodDown) : "";
@@ -570,6 +594,7 @@ Promise.all([
     document.getElementById("btn-creative").onclick = () => setView("creative");
     document.getElementById("btn-format").onclick = () => setView("format");
     document.getElementById("btn-perad").onclick = () => setView("ad");
+    document.getElementById("btn-campaign").onclick = toggleCampaign;
     applyRange(curRange);
   })
   .catch(e => { document.getElementById("panel").innerHTML = `<div class="err">Failed to load data/latest.json<br>${e}</div>`; });
