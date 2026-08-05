@@ -93,6 +93,7 @@
     <div class="platform-switch" id="platform-switch">
       <button class="pf active" id="pf-meta">📊 Meta</button>
       <button class="pf" id="pf-google">🔍 Google</button>
+      <button class="pf" id="pf-campaign">🎯 Campaign</button>
     </div>
     <div style="text-align:right">
       <select id="range" class="range-select"></select>
@@ -445,12 +446,13 @@ function accountInsightsHTML(acc) {
 }
 
 function renderTabs() {
-  document.getElementById("tabs").innerHTML = DATA.tabs.map((a, i) =>
-    `<div class="tab ${i === activeIdx ? "active" : ""} ${a.kind === "campaign" ? "tab-camp" : ""}" onclick="selectTab(${i})">${a.label}<span class="g">${a.kind === "campaign" ? "CAMPAIGN" : (a.group || "")}</span></div>`
-  ).join("");
+  document.getElementById("tabs").innerHTML = DATA.tabs.map((a, i) => {
+    const tag = a.kind === "campaign" ? (platform === "campaign" ? "" : "CAMPAIGN") : (a.group || "");
+    return `<div class="tab ${i === activeIdx ? "active" : ""} ${a.kind === "campaign" ? "tab-camp" : ""}" onclick="selectTab(${i})">${a.label}<span class="g">${tag}</span></div>`;
+  }).join("");
 }
 
-function selectTab(i) { activeIdx = i; sortKey = "spend"; sortDir = -1; renderTabs(); renderPanel(); }
+function selectTab(i) { activeIdx = i; sortKey = "spend"; sortDir = -1; renderTabs(); if (platform === "campaign") renderCampaignCards(); renderPanel(); }
 function sortBy(k) { if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; } renderPanel(); }
 function setView(m) { viewMode = m; sortKey = "spend"; sortDir = -1; renderControls(); renderPanel(); }
 function toggleCampaign() { showCampaign = !showCampaign; renderControls(); renderPanel(); }
@@ -833,25 +835,65 @@ function applyRangeGoogle(key) {
 function switchPlatform(p) {
   if (p === platform || (p === "google" && !GG)) return;
   platform = p;
-  activeIdx = 0; sortKey = "spend"; sortDir = -1; viewMode = "creative";
+  activeIdx = 0; sortKey = "spend"; sortDir = -1; viewMode = "creative"; showCampaign = false;
   document.getElementById("pf-meta").className = "pf" + (p === "meta" ? " active" : "");
   document.getElementById("pf-google").className = "pf" + (p === "google" ? " active" : "");
-  document.getElementById("title").textContent = p === "google"
-    ? "🔍 Chotot Google Ads — Campaign / Ad group"
-    : "📊 Chotot Meta Ads — Creative Performance";
+  document.getElementById("pf-campaign").className = "pf" + (p === "campaign" ? " active" : "");
+  const titles = {
+    meta: "📊 Chotot Meta Ads — Creative Performance",
+    google: "🔍 Chotot Google Ads — Campaign / Ad group",
+    campaign: "🎯 Chotot Campaign Reports — Awareness → Install",
+  };
+  document.getElementById("title").textContent = titles[p] || titles.meta;
   applyRange(curRange);
 }
 
 function applyRange(key) {
   if (platform === "google") { applyRangeGoogle(key); return; }
+  if (platform === "campaign") { applyRangeCampaign(key); return; }
   curRange = key;
   applyAirbridge(key);
   const accounts = RANGES[key].accounts;
-  DATA = {accounts, campaigns: buildCampaignTabs(accounts)};
-  DATA.tabs = [...accounts.map(a => ({kind: "account", ...a})), ...DATA.campaigns];
+  DATA = {accounts};
+  DATA.tabs = accounts.map(a => ({kind: "account", ...a}));
   activeIdx = Math.min(Math.max(activeIdx, 0), DATA.tabs.length - 1);
   document.getElementById("period").textContent = RANGES[key].period_label || "";
   renderCards(); renderInsights(); renderTabs(); renderControls(); renderPanel();
+}
+
+// CAMPAIGN view: the themed Brand-team campaigns (Thổ Địa, Back to School) that
+// sync awareness -> app install, promoted to their own top-level section next to
+// Meta / Google. Sub-tabs = the campaigns; cards summarize the selected campaign.
+function renderCampaignCards() {
+  const tab = DATA.tabs[activeIdx];
+  const all = [];
+  if (tab && tab.sections) tab.sections.forEach(s => s.creatives.forEach(c => all.push(normalize(c))));
+  const sum = k => all.reduce((s, c) => s + (c[k] || 0), 0);
+  const spend = sum("spend"), impr = sum("impressions"), clk = sum("clicks"), ins = sum("installs");
+  const ctr = impr ? clk / impr * 100 : 0, cpi = ins ? spend / ins : 0;
+  const cards = [
+    {k: "Total Spend", v: fmtMoney(spend), accent: true},
+    {k: "Impressions", v: fmtInt(impr)},
+    {k: "Clicks", v: fmtInt(clk)},
+    {k: "Avg CTR", v: fmtPct(ctr)},
+    {k: AB ? "Installs · Airbridge" : "Installs", v: ins ? fmtInt(ins) : "–"},
+    {k: "Avg CPI", v: cpi ? fmtVndSgd(cpi) : "–"},
+    {k: "Creatives", v: fmtInt(all.length)},
+  ];
+  document.getElementById("cards").innerHTML = cards.map(c =>
+    `<div class="card"><div class="k">${c.k}</div><div class="v ${c.accent ? "accent" : ""}">${c.v}</div></div>`
+  ).join("");
+}
+
+function applyRangeCampaign(key) {
+  curRange = key;
+  applyAirbridge(key);
+  const accounts = RANGES[key].accounts;
+  DATA = {accounts, tabs: buildCampaignTabs(accounts)};
+  activeIdx = Math.min(Math.max(activeIdx, 0), DATA.tabs.length - 1);
+  document.getElementById("period").textContent = RANGES[key].period_label || "";
+  document.getElementById("insights").style.display = "none";  // per-section insights suffice
+  renderCampaignCards(); renderTabs(); renderControls(); renderPanel();
 }
 
 Promise.all([
@@ -883,10 +925,10 @@ Promise.all([
     document.getElementById("btn-campaign").onclick = toggleCampaign;
 
     // Top-level Meta / Google switch. Hide the Google button if no snapshot.
-    const pfMeta = document.getElementById("pf-meta"), pfGoogle = document.getElementById("pf-google");
-    pfMeta.onclick = () => switchPlatform("meta");
-    pfGoogle.onclick = () => switchPlatform("google");
-    if (!GG) document.getElementById("platform-switch").style.display = "none";
+    document.getElementById("pf-meta").onclick = () => switchPlatform("meta");
+    document.getElementById("pf-google").onclick = () => switchPlatform("google");
+    document.getElementById("pf-campaign").onclick = () => switchPlatform("campaign");
+    if (!GG) document.getElementById("pf-google").style.display = "none";
 
     applyRange(curRange);
   })
