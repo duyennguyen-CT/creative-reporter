@@ -198,8 +198,8 @@ def fetch_formats(ad_ids):
     return out
 
 
-def period_label(preset):
-    """Human date range that approximates Meta's definition of the preset."""
+def preset_window(preset):
+    """Return (since, until) dates that approximate Meta's definition of the preset."""
     t = datetime.date.today()
     y = t - datetime.timedelta(days=1)
     if preset == "yesterday":
@@ -217,6 +217,12 @@ def period_label(preset):
         s = e.replace(day=1)
     else:
         s = e = t
+    return s, e
+
+
+def period_label(preset):
+    """Human date range that approximates Meta's definition of the preset."""
+    s, e = preset_window(preset)
     return f"{s:%-d %b} – {e:%-d %b %Y}"
 
 
@@ -279,6 +285,7 @@ def build_from_api():
     ad_ids = set()
     for preset, label in PRESETS:
         prev = previous_range(preset)
+        cur_since, cur_until = preset_window(preset)
         accounts = []
         for acc_label, acc_id in ACCOUNTS.items():
             print(f"Pulling [{preset}] {acc_label} ({acc_id}) ...")
@@ -304,6 +311,10 @@ def build_from_api():
         ranges[preset] = {
             "label": label,
             "period_label": period_label(preset),
+            "since": str(cur_since),
+            "until": str(cur_until),
+            "prev_since": str(prev[0]) if prev else None,
+            "prev_until": str(prev[1]) if prev else None,
             "accounts": accounts,
         }
 
