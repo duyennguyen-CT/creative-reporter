@@ -169,6 +169,7 @@ function applyAirbridge(key) {
 const fmtInt = n => n.toLocaleString("en-US");
 const fmtMoney = n => CUR + " " + n.toLocaleString("en-US", {minimumFractionDigits: 2, maximumFractionDigits: 2});
 const fmtVnd = n => "₫" + Math.round(n).toLocaleString("en-US");
+const fmtVndSgd = n => fmtVnd(n * SGD_TO_VND);  // value is in SGD -> render as VND
 const fmtPct = n => n.toFixed(2) + "%";
 const fmtDash = f => n => (n > 0 && isFinite(n)) ? f(n) : "–";  // show "–" instead of 0
 
@@ -264,7 +265,7 @@ function renderCards() {
     {k: "Clicks", v: fmtInt(g.clicks)},
     {k: "Avg CTR", v: fmtPct(avgCtr)},
     {k: AB ? "Installs · Airbridge" : "Installs", v: g.installs ? fmtInt(g.installs) : "–"},
-    {k: "Avg CPI", v: cpi ? fmtMoney(cpi) : "–"},
+    {k: "Avg CPI", v: cpi ? fmtVndSgd(cpi) : "–"},
     {k: "Creatives", v: fmtInt(g.count) + " · " + DATA.accounts.length + " acc"},
   ];
   document.getElementById("cards").innerHTML = cards.map(c =>
@@ -286,7 +287,7 @@ function computeInsights(accounts) {
 
   // 1) Overview
   out.push(`<b>${fmtInt(all.length)}</b> creatives across <b>${accounts.length}</b> accounts · Spend <b>${fmtMoney(spend)}</b>`
-    + (installs ? ` · <b>${fmtInt(installs)}</b> installs @ CPI ${fmtMoney(cpi)}` : "")
+    + (installs ? ` · <b>${fmtInt(installs)}</b> installs @ CPI ${fmtVndSgd(cpi)}` : "")
     + ` · Avg CTR ${fmtPct(ctr)}.`);
 
   // 2) Format that captures the most spend
@@ -295,26 +296,26 @@ function computeInsights(accounts) {
     const lead = fmt[0];
     out.push(`Top format by spend: <b>${lead.name}</b> — ${fmtMoney(lead.spend)} `
       + `(${spend ? Math.round(lead.spend / spend * 100) : 0}% of spend, ${lead.ads} ads, CTR ${fmtPct(lead.ctr)}`
-      + (lead.installs ? `, CPI ${fmtMoney(lead.cpi)}` : "") + ").");
+      + (lead.installs ? `, CPI ${fmtVndSgd(lead.cpi)}` : "") + ").");
   }
 
   // 3) Most efficient format by CPI (only when installs exist to compare)
   const withInst = fmt.filter(f => f.installs > 0);
   if (withInst.length > 1) {
     const best = withInst.slice().sort((a, b) => a.cpi - b.cpi)[0];
-    out.push(`Most efficient format: <b>${best.name}</b> at CPI ${fmtMoney(best.cpi)} on ${fmtInt(best.installs)} installs.`);
+    out.push(`Most efficient format: <b>${best.name}</b> at CPI ${fmtVndSgd(best.cpi)} on ${fmtInt(best.installs)} installs.`);
   }
 
   // 4) Highest-spend creative
   const topSpend = all.slice().sort((a, b) => b.spend - a.spend)[0];
   out.push(`Highest-spend creative: <b>${topSpend.name}</b> (${topSpend.account}) — ${fmtMoney(topSpend.spend)}, CTR ${fmtPct(topSpend.ctr)}`
-    + (topSpend.installs ? `, CPI ${fmtMoney(topSpend.cpi)}` : "") + ".");
+    + (topSpend.installs ? `, CPI ${fmtVndSgd(topSpend.cpi)}` : "") + ".");
 
   // 5) Best CPI creative (min 5 installs to avoid noise)
   const cand = all.filter(c => c.installs >= 5);
   if (cand.length) {
     const bestCpi = cand.slice().sort((a, b) => a.cpi - b.cpi)[0];
-    out.push(`Best CPI: <b>${bestCpi.name}</b> (${bestCpi.account}) — CPI ${fmtMoney(bestCpi.cpi)} on ${fmtInt(bestCpi.installs)} installs.`);
+    out.push(`Best CPI: <b>${bestCpi.name}</b> (${bestCpi.account}) — CPI ${fmtVndSgd(bestCpi.cpi)} on ${fmtInt(bestCpi.installs)} installs.`);
   }
 
   // 6) Frequency fatigue watch
@@ -377,21 +378,21 @@ function computeAccountInsights(acc) {
   } else {
     // --- GROWTH: CPI ---
     out.push(`<b>${all.length}</b> creatives · Spend <b>${fmtMoney(spend)}</b>`
-      + (installs ? ` · <b>${fmtInt(installs)}</b> installs @ CPI <b>${fmtMoney(cpi)}</b>${deltaBadge(d.cpi_d, true)}` : " · no installs tracked")
+      + (installs ? ` · <b>${fmtInt(installs)}</b> installs @ CPI <b>${fmtVndSgd(cpi)}</b>${deltaBadge(d.cpi_d, true)}` : " · no installs tracked")
       + ` · CTR ${fmtPct(ctr)}${deltaBadge(d.ctr_d, false)}.`);
 
     const cand = all.filter(c => c.installs >= 5);
     if (cand.length) {
       const best = cand.slice().sort((a, b) => a.cpi - b.cpi)[0];
-      out.push(`Best CPI: <b>${best.name}</b> — ${fmtMoney(best.cpi)} on ${fmtInt(best.installs)} installs (CTR ${fmtPct(best.ctr)}).`);
+      out.push(`Best CPI: <b>${best.name}</b> — ${fmtVndSgd(best.cpi)} on ${fmtInt(best.installs)} installs (CTR ${fmtPct(best.ctr)}).`);
       const worst = cand.slice().sort((a, b) => b.cpi - a.cpi)[0];
       if (worst !== best) {
-        out.push({warn: true, html: `Worst CPI: <b>${worst.name}</b> — ${fmtMoney(worst.cpi)} on ${fmtInt(worst.installs)} installs, spend ${fmtMoney(worst.spend)}. Consider optimizing/pausing.`});
+        out.push({warn: true, html: `Worst CPI: <b>${worst.name}</b> — ${fmtVndSgd(worst.cpi)} on ${fmtInt(worst.installs)} installs, spend ${fmtMoney(worst.spend)}. Consider optimizing/pausing.`});
       }
     }
     const ts = all.slice().sort((a, b) => b.spend - a.spend)[0];
     out.push(`Highest spend: <b>${ts.name}</b> — ${fmtMoney(ts.spend)}`
-      + (ts.installs ? `, CPI ${fmtMoney(ts.cpi)}` : "") + `, CTR ${fmtPct(ts.ctr)}.`);
+      + (ts.installs ? `, CPI ${fmtVndSgd(ts.cpi)}` : "") + `, CTR ${fmtPct(ts.ctr)}.`);
   }
 
   // Frequency fatigue watch (both objectives).
@@ -432,15 +433,14 @@ const COLS = [
   {k: "reach", label: "Reach", f: fmtInt},
   {k: "clicks", label: "Clicks", f: fmtInt},
   {k: "ctr", label: "CTR", f: fmtPct, d: "ctr_d", goodDown: false},
-  {k: "cpc", label: "CPC", f: fmtMoney},
-  {k: "cpm", label: "CPM", f: fmtMoney},
+  {k: "cpc", label: "CPC (₫)", f: fmtVndSgd},
+  {k: "cpm", label: "CPM (₫)", f: fmtVndSgd},
   {k: "engagement", label: "Post Eng.", f: fmtDash(fmtInt)},
   {k: "eng_rate", label: "ER", f: fmtDash(fmtPct)},
   {k: "hook_rate", label: "Hook", f: fmtDash(fmtPct)},
   {k: "hold_rate", label: "Hold", f: fmtDash(fmtPct)},
   {k: "installs", label: "Installs", f: fmtDash(fmtInt)},
-  {k: "cpi", label: "CPI", f: fmtDash(fmtMoney), d: "cpi_d", goodDown: true},
-  {k: "cpi_vnd", label: "CPI (₫)", f: fmtDash(fmtVnd)},
+  {k: "cpi_vnd", label: "CPI (₫)", f: fmtDash(fmtVnd), d: "cpi_d", goodDown: true},
   {k: "frequency", label: "Freq", f: freqBadge},
 ];
 
