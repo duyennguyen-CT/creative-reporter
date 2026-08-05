@@ -330,10 +330,6 @@ def main():
         print("Set the token to pull live data:  export META_ACCESS_TOKEN=...")
         return
 
-    # TEMP DEBUG: print which user/system-user owns the token (identity only, never the token)
-    me = _get(f"{META_GRAPH_URL}/me", {"fields": "id,name", "access_token": TOKEN})
-    print(f"TOKEN_OWNER: name={me.get('name')!r} id={me.get('id')!r}")
-
     report = build_from_api()
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUT_PATH.write_text(json.dumps(report, ensure_ascii=False, indent=2))
