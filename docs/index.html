@@ -20,6 +20,10 @@
   h1 { font-size: 20px; margin: 0; }
   .sub { color: var(--muted); font-size: 13px; }
   .range-select { font-size: 13px; padding: 7px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); cursor: pointer; margin-bottom: 6px; }
+  .platform-switch { display: inline-flex; gap: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--card); align-self: center; }
+  .platform-switch .pf { border: none; background: transparent; padding: 9px 20px; font-size: 14px; font-weight: 700; color: var(--muted); cursor: pointer; }
+  .platform-switch .pf.active { background: var(--accent); color: #fff; }
+  .platform-switch .pf:not(.active):hover { background: #f3f0fd; color: var(--accent); }
   .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 14px; margin: 22px 0; }
   .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
   .card .k { font-size: 11px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
@@ -83,8 +87,12 @@
 <div class="wrap">
   <header>
     <div>
-      <h1>📊 Chotot Meta Ads — Creative Performance</h1>
+      <h1 id="title">📊 Chotot Meta Ads — Creative Performance</h1>
       <div class="sub" id="period">…</div>
+    </div>
+    <div class="platform-switch" id="platform-switch">
+      <button class="pf active" id="pf-meta">📊 Meta</button>
+      <button class="pf" id="pf-google">🔍 Google</button>
     </div>
     <div style="text-align:right">
       <select id="range" class="range-select"></select>
@@ -115,6 +123,8 @@ let RAW = null, RANGES = {}, curRange = null;
 let DATA = null, activeIdx = 0, sortKey = "spend", sortDir = -1, viewMode = "creative";
 let showCampaign = false;  // Campaign column is collapsed by default (toggle to show)
 let AB = null;  // Airbridge MMP installs snapshot (docs/data/airbridge_installs.json)
+let GG = null;  // Google Ads snapshot (docs/data/google_data.json): sheet cost + Airbridge installs
+let platform = "meta";  // top-level view: "meta" (default) | "google"
 
 // --- Airbridge install override -----------------------------------------
 // Installs come from the Airbridge MMP (last-click attribution), NOT Meta's
@@ -466,6 +476,10 @@ const COLS = [
 ];
 
 function renderControls() {
+  // The By creative / By format / Per ad / +Campaign controls are Meta-specific
+  // (Google is already at campaign -> ad group level with a Campaign column).
+  document.querySelector(".controls").style.display = platform === "google" ? "none" : "";
+  if (platform === "google") return;
   document.getElementById("btn-creative").className = "ctl" + (viewMode === "creative" ? " active" : "");
   document.getElementById("btn-format").className = "ctl" + (viewMode === "format" ? " active" : "");
   document.getElementById("btn-perad").className = "ctl" + (viewMode === "ad" ? " active" : "");
@@ -584,6 +598,13 @@ function renderPanel() {
   const panel = document.getElementById("panel");
   if (!tab) { panel.innerHTML = ""; return; }
 
+  if (platform === "google") {
+    panel.innerHTML = tab.creatives.length
+      ? googleAccountPanelHTML(tab)
+      : `<div class="panel"><div class="empty">Không có dữ liệu Google cho tài khoản này trong khoảng thời gian đã chọn.</div></div>`;
+    return;
+  }
+
   if (tab.kind === "campaign") {
     // Campaign report: one shared-theme campaign split by the team running it.
     const note = `<div class="camp-note">📌 <b>${tab.title}</b> — chiến dịch Brand team (vertical PTY), sync từ awareness → app install (install dùng chung asset/theme của campaign). Tách theo team chạy:</div>`;
@@ -630,7 +651,199 @@ function buildCampaignTabs(accounts) {
   }));
 }
 
+// ========================================================================
+// GOOGLE ADS view. Data = docs/data/google_data.json (cost/impr/clicks from a
+// team Google Sheet, installs from Airbridge Channel='google.adwords'). Native
+// VND (no SGD conversion). Level = campaign -> ad group: each row is one ad
+// group within one campaign. Sums each preset's today-relative window with the
+// SAME abWindow() logic as the Airbridge Meta override, so windows line up.
+// ========================================================================
+const GCOLS = [
+  {k: "campaign", label: "Campaign"},
+  {k: "name", label: "Ad group"},
+  {k: "spend", label: "Spend (₫)", f: fmtVnd},
+  {k: "installs", label: "Installs", f: fmtDash(fmtInt)},
+  {k: "cpi", label: "CPI (₫)", f: fmtDash(fmtVnd)},
+  {k: "impressions", label: "Impr.", f: fmtInt},
+  {k: "clicks", label: "Clicks", f: fmtInt},
+  {k: "ctr", label: "CTR", f: fmtPct},
+  {k: "cpc", label: "CPC (₫)", f: fmtDash(fmtVnd)},
+  {k: "cpm", label: "CPM (₫)", f: fmtDash(fmtVnd)},
+];
+
+// Sum google_data.by_day over the window for `key`, grouped by account.
+// Returns Map<account, ad-group-row[]>.
+function ggWindow(key) {
+  const {since, until} = abWindow(key);
+  const agg = new Map();  // cid_agid -> [cost, impr, clicks, installs]
+  for (const day in GG.by_day) {
+    if (day < since || day > until) continue;
+    const m = GG.by_day[day];
+    for (const k in m) {
+      const v = m[k], t = agg.get(k) || [0, 0, 0, 0];
+      t[0] += v[0]; t[1] += v[1]; t[2] += v[2]; t[3] += v[3];
+      agg.set(k, t);
+    }
+  }
+  const byAcct = new Map();
+  agg.forEach((v, k) => {
+    const d = GG.dims[k]; if (!d) return;
+    const [cost, impr, clk, ins] = v;
+    if (!(cost || impr || clk || ins)) return;
+    const row = {
+      name: d.ag || "—", campaign: d.camp || "—", ads: 1,
+      spend: cost, impressions: impr, clicks: clk, installs: ins,
+      ctr: impr ? clk / impr * 100 : 0,
+      cpc: clk ? cost / clk : 0,
+      cpm: impr ? cost / impr * 1000 : 0,
+      cpi: ins ? cost / ins : 0,
+    };
+    if (!byAcct.has(d.acct)) byAcct.set(d.acct, []);
+    byAcct.get(d.acct).push(row);
+  });
+  return byAcct;
+}
+
+function ggTotals(creatives) {
+  const t = {spend: 0, impressions: 0, clicks: 0, installs: 0};
+  creatives.forEach(c => { t.spend += c.spend; t.impressions += c.impressions; t.clicks += c.clicks; t.installs += c.installs; });
+  t.ctr = t.impressions ? t.clicks / t.impressions * 100 : 0;
+  t.cpi = t.installs ? t.spend / t.installs : 0;
+  t.count = creatives.length;
+  return t;
+}
+
+function renderGoogleCards() {
+  const g = {spend: 0, impressions: 0, clicks: 0, installs: 0, count: 0};
+  DATA.accounts.forEach(a => { const t = ggTotals(a.creatives); g.spend += t.spend; g.impressions += t.impressions; g.clicks += t.clicks; g.installs += t.installs; g.count += t.count; });
+  const avgCtr = g.impressions ? g.clicks / g.impressions * 100 : 0;
+  const cpi = g.installs ? g.spend / g.installs : 0;
+  const cards = [
+    {k: "Total Spend", v: fmtVnd(g.spend), accent: true},
+    {k: "Impressions", v: fmtInt(g.impressions)},
+    {k: "Clicks", v: fmtInt(g.clicks)},
+    {k: "Avg CTR", v: fmtPct(avgCtr)},
+    {k: "Installs · Airbridge", v: g.installs ? fmtInt(g.installs) : "–"},
+    {k: "Avg CPI", v: cpi ? fmtVnd(cpi) : "–"},
+    {k: "Ad groups", v: fmtInt(g.count) + " · " + DATA.accounts.length + " acc"},
+  ];
+  document.getElementById("cards").innerHTML = cards.map(c =>
+    `<div class="card"><div class="k">${c.k}</div><div class="v ${c.accent ? "accent" : ""}">${c.v}</div></div>`
+  ).join("");
+}
+
+function computeGoogleInsights() {
+  const all = [];
+  DATA.accounts.forEach(a => a.creatives.forEach(c => all.push({...c, account: a.label})));
+  if (!all.length) return [];
+  const sum = k => all.reduce((s, c) => s + (c[k] || 0), 0);
+  const spend = sum("spend"), installs = sum("installs"), impr = sum("impressions"), clicks = sum("clicks");
+  const ctr = impr ? clicks / impr * 100 : 0, cpi = installs ? spend / installs : 0;
+  const out = [];
+  out.push(`<b>${fmtInt(all.length)}</b> ad groups across <b>${DATA.accounts.length}</b> accounts · Spend <b>${fmtVnd(spend)}</b>`
+    + (installs ? ` · <b>${fmtInt(installs)}</b> installs @ CPI ${fmtVnd(cpi)}` : "") + ` · Avg CTR ${fmtPct(ctr)}.`);
+  // Top account by spend
+  const accs = DATA.accounts.map(a => ({label: a.label, ...ggTotals(a.creatives)})).sort((x, y) => y.spend - x.spend);
+  if (accs.length) {
+    const lead = accs[0];
+    out.push(`Top account by spend: <b>${lead.label}</b> — ${fmtVnd(lead.spend)} `
+      + `(${spend ? Math.round(lead.spend / spend * 100) : 0}% of spend`
+      + (lead.installs ? `, ${fmtInt(lead.installs)} installs @ CPI ${fmtVnd(lead.cpi)}` : "") + ").");
+  }
+  // Best / worst CPI ad group (min 20 installs to avoid noise)
+  const cand = all.filter(c => c.installs >= 20);
+  if (cand.length) {
+    const best = cand.slice().sort((a, b) => a.cpi - b.cpi)[0];
+    out.push(`Best CPI: <b>${best.name}</b> (${best.account} · ${best.campaign}) — ${fmtVnd(best.cpi)} on ${fmtInt(best.installs)} installs.`);
+    const worst = cand.slice().sort((a, b) => b.cpi - a.cpi)[0];
+    if (worst !== best) out.push({warn: true, html: `Worst CPI: <b>${worst.name}</b> (${worst.account} · ${worst.campaign}) — ${fmtVnd(worst.cpi)} on ${fmtInt(worst.installs)} installs, spend ${fmtVnd(worst.spend)}.`});
+  }
+  return out;
+}
+
+function renderGoogleInsights() {
+  const box = document.getElementById("insights");
+  const rows = computeGoogleInsights();
+  if (!rows.length) { box.style.display = "none"; return; }
+  const period = (RANGES[curRange] && RANGES[curRange].period_label) || "";
+  box.style.display = "";
+  box.innerHTML = `<div class="ins-head">💡 KEY INSIGHTS · GOOGLE ADS${period ? " — " + period.toUpperCase() : ""}</div>`
+    + rows.map(r => typeof r === "string" ? `<div class="ins-row">${r}</div>` : `<div class="ins-row warn">${r.html}</div>`).join("");
+}
+
+// Per-account insights for a Google account (CPI focus — these are install/DAU buys).
+function computeGoogleAccountInsights(acc) {
+  const all = acc.creatives;
+  if (!all.length) return [];
+  const t = ggTotals(all);
+  const out = [];
+  out.push(`<b>${all.length}</b> ad groups · Spend <b>${fmtVnd(t.spend)}</b>`
+    + (t.installs ? ` · <b>${fmtInt(t.installs)}</b> installs @ CPI <b>${fmtVnd(t.cpi)}</b>` : " · no installs tracked")
+    + ` · CTR ${fmtPct(t.ctr)}.`);
+  const cand = all.filter(c => c.installs >= 10);
+  if (cand.length) {
+    const best = cand.slice().sort((a, b) => a.cpi - b.cpi)[0];
+    out.push(`Best CPI: <b>${best.name}</b> (${best.campaign}) — ${fmtVnd(best.cpi)} on ${fmtInt(best.installs)} installs (CTR ${fmtPct(best.ctr)}).`);
+    const worst = cand.slice().sort((a, b) => b.cpi - a.cpi)[0];
+    if (worst !== best) out.push({warn: true, html: `Worst CPI: <b>${worst.name}</b> (${worst.campaign}) — ${fmtVnd(worst.cpi)} on ${fmtInt(worst.installs)} installs, spend ${fmtVnd(worst.spend)}.`});
+  }
+  const ts = all.slice().sort((a, b) => b.spend - a.spend)[0];
+  out.push(`Highest spend: <b>${ts.name}</b> (${ts.campaign}) — ${fmtVnd(ts.spend)}`
+    + (ts.installs ? `, CPI ${fmtVnd(ts.cpi)}` : "") + `, CTR ${fmtPct(ts.ctr)}.`);
+  return out;
+}
+
+function googleAccountPanelHTML(acc) {
+  const t = ggTotals(acc.creatives);
+  const rows = acc.creatives.slice().sort((a, b) => {
+    const x = a[sortKey], y = b[sortKey];
+    if (typeof x === "string") return sortDir * String(x).localeCompare(String(y));
+    return sortDir * ((x || 0) - (y || 0));
+  });
+  const insRows = computeGoogleAccountInsights(acc);
+  const insHTML = insRows.length
+    ? `<div class="insights" style="margin:0 0 16px"><div class="ins-head">💡 KEY INSIGHTS — ${acc.label.toUpperCase()} <span style="font-weight:600;color:var(--muted)">· focus: CPI (app install)</span></div>`
+      + insRows.map(r => typeof r === "string" ? `<div class="ins-row">${r}</div>` : `<div class="ins-row warn">${r.html}</div>`).join("") + `</div>`
+    : "";
+  return insHTML + `
+    <div class="panel">
+      <div class="panel-head">
+        <b>${acc.label}</b>
+        <span>Spend ${fmtVnd(t.spend)}</span>
+        <span>Impr ${fmtInt(t.impressions)}</span>
+        <span>Clicks ${fmtInt(t.clicks)}</span>
+        <span>CTR ${fmtPct(t.ctr)}</span>
+        ${t.installs ? `<span>Installs ${fmtInt(t.installs)} @ CPI ${fmtVnd(t.cpi)}</span>` : ""}
+        <span>${rows.length} ad groups</span>
+      </div>
+      ${tableHTML(rows, GCOLS, true)}
+    </div>`;
+}
+
+function applyRangeGoogle(key) {
+  curRange = key;
+  const byAcct = ggWindow(key);
+  DATA = {accounts: GG.accounts.map(a => ({kind: "account", label: a, group: "GOOGLE", creatives: byAcct.get(a) || []}))};
+  DATA.tabs = DATA.accounts;
+  activeIdx = Math.min(Math.max(activeIdx, 0), DATA.tabs.length - 1);
+  document.getElementById("period").textContent = RANGES[key].period_label || "";
+  renderGoogleCards(); renderGoogleInsights(); renderTabs(); renderControls(); renderPanel();
+}
+
+function switchPlatform(p) {
+  if (p === platform || (p === "google" && !GG)) return;
+  platform = p;
+  activeIdx = 0; sortKey = "spend"; sortDir = -1; viewMode = "creative";
+  document.getElementById("pf-meta").className = "pf" + (p === "meta" ? " active" : "");
+  document.getElementById("pf-google").className = "pf" + (p === "google" ? " active" : "");
+  document.getElementById("title").textContent = p === "google"
+    ? "🔍 Chotot Google Ads — Campaign / Ad group"
+    : "📊 Chotot Meta Ads — Creative Performance";
+  applyRange(curRange);
+}
+
 function applyRange(key) {
+  if (platform === "google") { applyRangeGoogle(key); return; }
   curRange = key;
   applyAirbridge(key);
   const accounts = RANGES[key].accounts;
@@ -644,11 +857,14 @@ function applyRange(key) {
 Promise.all([
   fetch("./data/latest.json?v=" + Date.now()).then(r => r.json()),
   fetch("./data/airbridge_installs.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
+  fetch("./data/google_data.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
 ])
-  .then(([d, ab]) => {
+  .then(([d, ab, gg]) => {
     RAW = d;
     AB = ab;
+    GG = gg;
     if (AB) console.log("Airbridge installs loaded:", AB.date_range, Object.keys(AB.by_day || {}).length, "days");
+    if (GG) console.log("Google data loaded:", GG.accounts, Object.keys(GG.by_day || {}).length, "days, through", GG.data_through);
     // New schema has `ranges`; fall back to old flat schema for safety.
     RANGES = d.ranges || {all: {label: "", period_label: d.period_label, accounts: d.accounts}};
     const keys = Object.keys(RANGES);
@@ -665,6 +881,13 @@ Promise.all([
     document.getElementById("btn-format").onclick = () => setView("format");
     document.getElementById("btn-perad").onclick = () => setView("ad");
     document.getElementById("btn-campaign").onclick = toggleCampaign;
+
+    // Top-level Meta / Google switch. Hide the Google button if no snapshot.
+    const pfMeta = document.getElementById("pf-meta"), pfGoogle = document.getElementById("pf-google");
+    pfMeta.onclick = () => switchPlatform("meta");
+    pfGoogle.onclick = () => switchPlatform("google");
+    if (!GG) document.getElementById("platform-switch").style.display = "none";
+
     applyRange(curRange);
   })
   .catch(e => { document.getElementById("panel").innerHTML = `<div class="err">Failed to load data/latest.json<br>${e}</div>`; });
