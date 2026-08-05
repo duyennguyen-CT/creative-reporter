@@ -450,8 +450,23 @@ function renderControls() {
   document.getElementById("btn-perad").className = "ctl" + (viewMode === "ad" ? " active" : "");
 }
 
+// GROWTH accounts run app installs -> lead with Spend, Installs, CPI and drop
+// the Reach column (secondary for install-focused buying). BRAND keeps the
+// default column order (incl. Reach). Columns are chosen per account.
+const COL_BY_KEY = Object.fromEntries(COLS.map(c => [c.k, c]));
+const GROWTH_ORDER = ["name", "format", "spend", "installs", "cpi_vnd", "spend_vnd",
+  "impressions", "clicks", "ctr", "cpc", "cpm", "engagement", "eng_rate",
+  "hook_rate", "hold_rate", "frequency"];
+function colsFor(acc) {
+  return (acc.group || "").toUpperCase() === "GROWTH"
+    ? GROWTH_ORDER.map(k => COL_BY_KEY[k])
+    : COLS;
+}
+
 // Columns for the format views: first column is the format, no separate Format col.
-const FORMAT_COLS = [{k: "name", label: "Format"}, ...COLS.filter(c => c.k !== "name" && c.k !== "format")];
+function formatColsFor(acc) {
+  return [{k: "name", label: "Format"}, ...colsFor(acc).filter(c => c.k !== "name" && c.k !== "format")];
+}
 
 // Build one <table>. When sortable, headers wire to sortBy and highlight sortKey.
 function tableHTML(rows, cols, sortable) {
@@ -493,7 +508,7 @@ function renderPanel() {
       if (typeof x === "string") return sortDir * x.localeCompare(y);
       return sortDir * (x - y);
     });
-  const cols = byFormat ? FORMAT_COLS : COLS;
+  const cols = byFormat ? formatColsFor(acc) : colsFor(acc);
   const unit = viewMode === "creative" ? "creatives" : byFormat ? "formats" : "ads";
 
   // Breakdown-by-format summary (always sorted by spend; hidden when the
@@ -504,7 +519,7 @@ function renderPanel() {
     breakdown = `
       <div class="panel" style="margin-bottom:16px">
         <div class="panel-head"><b>Breakdown by format</b><span>${fmtRows.length} formats</span></div>
-        ${tableHTML(fmtRows, FORMAT_COLS, false)}
+        ${tableHTML(fmtRows, formatColsFor(acc), false)}
       </div>`;
   }
 
