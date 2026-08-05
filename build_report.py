@@ -24,21 +24,38 @@ import pathlib
 META_GRAPH_URL = "https://graph.facebook.com/v21.0"
 
 # label -> ad account id (numeric, without the "act_" prefix)
+# Classification follows the team's master account list (Channel=FB, Team=Growth/Brand).
 ACCOUNTS = {
-    "Chotot_growth_sgd":  "217167486615130",
-    "Chotot_gds_elt_sgd": "655717678725444",
-    "Chotot_job_sgd":     "1009648153146994",
-    "Chotot_pty_sgd":     "189567943020118",
-    "Chotot_veh_sgd":     "211751247179666",
+    # --- GROWTH (FB) ---
+    "Chotot_growth_sgd":       "217167486615130",
+    "Chotot_gds_elt_sgd":      "655717678725444",
+    "Chotot_job_sgd":          "1009648153146994",
+    "Chotot_pty_sgd":          "189567943020118",
+    "Chotot_veh_sgd":          "211751247179666",
+    "Chotot_pty_app":          "1924712638163043",
+    "Chotot_job_app":          "1021879607190581",
+    "Chotot_veh_app":          "27596542009984281",
+    # --- BRAND (FB) ---
+    "Chotot_pty_branding_sgd": "697690298835029",
+    "Chotot_job_branding_sgd": "339646702235039",
+    "Chotot_gds_brand":        "253279950744492",
+    "Chotot_veh_brand":        "937141594251635",
 }
 
 # Which group each account belongs to (used only for labelling in the UI).
 GROUPS = {
-    "Chotot_growth_sgd":  "GROWTH",
-    "Chotot_gds_elt_sgd": "GROWTH",
-    "Chotot_job_sgd":     "GROWTH",
-    "Chotot_pty_sgd":     "VERTICAL",
-    "Chotot_veh_sgd":     "VERTICAL",
+    "Chotot_growth_sgd":       "GROWTH",
+    "Chotot_gds_elt_sgd":      "GROWTH",
+    "Chotot_job_sgd":          "GROWTH",
+    "Chotot_pty_sgd":          "GROWTH",
+    "Chotot_veh_sgd":          "GROWTH",
+    "Chotot_pty_app":          "GROWTH",
+    "Chotot_job_app":          "GROWTH",
+    "Chotot_veh_app":          "GROWTH",
+    "Chotot_pty_branding_sgd": "BRAND",
+    "Chotot_job_branding_sgd": "BRAND",
+    "Chotot_gds_brand":        "BRAND",
+    "Chotot_veh_brand":        "BRAND",
 }
 
 # Time ranges pre-built into the dashboard (dropdown). key = Meta date_preset.
