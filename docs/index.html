@@ -274,6 +274,79 @@ function renderInsights() {
         : `<div class="ins-row warn">${r.html}</div>`).join("");
 }
 
+// Per-account insights, tailored to the team's objective:
+//   GROWTH accounts run app installs -> CPI is the headline metric.
+//   BRAND  accounts run awareness    -> Hook / CTR / ER are the headline metrics.
+function computeAccountInsights(acc) {
+  const all = acc.creatives.map(normalize);
+  if (!all.length) return [];
+  const brand = (acc.group || "").toUpperCase() === "BRAND";
+  const sum = k => all.reduce((s, c) => s + (c[k] || 0), 0);
+  const spend = sum("spend"), installs = sum("installs"), impr = sum("impressions"),
+        clicks = sum("clicks"), eng = sum("engagement"), v3 = sum("video_3s");
+  const ctr = impr ? clicks / impr * 100 : 0;
+  const cpi = installs ? spend / installs : 0;
+  const er = impr ? eng / impr * 100 : 0;
+  const d = deltas(ctr, cpi, sum("prev_impressions"), sum("prev_clicks"), sum("prev_spend"), sum("prev_installs"));
+  const out = [];
+
+  if (brand) {
+    // --- BRAND: Hook / CTR / ER ---
+    const vid = aggregateByFormat(acc.creatives).find(f => f.name === "Video");
+    out.push(`<b>${all.length}</b> creatives · Spend <b>${fmtMoney(spend)}</b> · CTR <b>${fmtPct(ctr)}</b>${deltaBadge(d.ctr_d, false)}`
+      + ` · ER <b>${fmtPct(er)}</b>` + (vid && vid.hook_rate ? ` · Hook <b>${fmtPct(vid.hook_rate)}</b> (video)` : "") + ".");
+
+    const vids = all.filter(c => c.format === "Video" && c.impressions >= 500 && c.hook_rate > 0);
+    if (vids.length) {
+      const bh = vids.slice().sort((a, b) => b.hook_rate - a.hook_rate)[0];
+      out.push(`Best hook: <b>${bh.name}</b> — Hook ${fmtPct(bh.hook_rate)}, Hold ${fmtPct(bh.hold_rate)} on ${fmtInt(bh.impressions)} impr.`);
+    }
+    const cc = all.filter(c => c.impressions >= 500);
+    if (cc.length) {
+      const bc = cc.slice().sort((a, b) => b.ctr - a.ctr)[0];
+      out.push(`Best CTR: <b>${bc.name}</b> — ${fmtPct(bc.ctr)} (${fmtInt(bc.clicks)} clicks, spend ${fmtMoney(bc.spend)}).`);
+      const be = cc.slice().sort((a, b) => b.eng_rate - a.eng_rate)[0];
+      out.push(`Best engagement rate: <b>${be.name}</b> — ER ${fmtPct(be.eng_rate)} (${fmtInt(be.engagement)} post eng.).`);
+    }
+  } else {
+    // --- GROWTH: CPI ---
+    out.push(`<b>${all.length}</b> creatives · Spend <b>${fmtMoney(spend)}</b>`
+      + (installs ? ` · <b>${fmtInt(installs)}</b> installs @ CPI <b>${fmtMoney(cpi)}</b>${deltaBadge(d.cpi_d, true)}` : " · no installs tracked")
+      + ` · CTR ${fmtPct(ctr)}${deltaBadge(d.ctr_d, false)}.`);
+
+    const cand = all.filter(c => c.installs >= 5);
+    if (cand.length) {
+      const best = cand.slice().sort((a, b) => a.cpi - b.cpi)[0];
+      out.push(`Best CPI: <b>${best.name}</b> — ${fmtMoney(best.cpi)} on ${fmtInt(best.installs)} installs (CTR ${fmtPct(best.ctr)}).`);
+      const worst = cand.slice().sort((a, b) => b.cpi - a.cpi)[0];
+      if (worst !== best) {
+        out.push({warn: true, html: `Worst CPI: <b>${worst.name}</b> — ${fmtMoney(worst.cpi)} on ${fmtInt(worst.installs)} installs, spend ${fmtMoney(worst.spend)}. Consider optimizing/pausing.`});
+      }
+    }
+    const ts = all.slice().sort((a, b) => b.spend - a.spend)[0];
+    out.push(`Highest spend: <b>${ts.name}</b> — ${fmtMoney(ts.spend)}`
+      + (ts.installs ? `, CPI ${fmtMoney(ts.cpi)}` : "") + `, CTR ${fmtPct(ts.ctr)}.`);
+  }
+
+  // Frequency fatigue watch (both objectives).
+  const fat = all.filter(c => c.frequency >= 7);
+  if (fat.length) {
+    const w = fat.slice().sort((a, b) => b.frequency - a.frequency)[0];
+    out.push({warn: true, html: `Frequency watch: <b>${fat.length}</b> creatives at ≥7× (highest ${w.frequency.toFixed(1)}× — ${w.name}). Consider refreshing.`});
+  }
+  return out;
+}
+
+function accountInsightsHTML(acc) {
+  const rows = computeAccountInsights(acc);
+  if (!rows.length) return "";
+  const focus = (acc.group || "").toUpperCase() === "BRAND" ? "Hook · CTR · ER" : "CPI (app install)";
+  return `<div class="insights" style="margin:0 0 16px">`
+    + `<div class="ins-head">💡 KEY INSIGHTS — ${acc.label.toUpperCase()} <span style="font-weight:600;color:var(--muted)">· focus: ${focus}</span></div>`
+    + rows.map(r => typeof r === "string" ? `<div class="ins-row">${r}</div>` : `<div class="ins-row warn">${r.html}</div>`).join("")
+    + `</div>`;
+}
+
 function renderTabs() {
   document.getElementById("tabs").innerHTML = DATA.accounts.map((a, i) =>
     `<div class="tab ${i === activeIdx ? "active" : ""}" onclick="selectTab(${i})">${a.label}<span class="g">${a.group || ""}</span></div>`
@@ -369,7 +442,7 @@ function renderPanel() {
       </div>`;
   }
 
-  document.getElementById("panel").innerHTML = breakdown + `
+  document.getElementById("panel").innerHTML = accountInsightsHTML(acc) + breakdown + `
     <div class="panel">
       <div class="panel-head">
         <b>${acc.label}</b>
