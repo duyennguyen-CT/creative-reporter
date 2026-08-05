@@ -52,7 +52,8 @@ PRESETS = [
 ]
 DEFAULT_RANGE = "last_30d"
 
-FIELDS = "ad_id,ad_name,spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,actions"
+FIELDS = ("ad_id,ad_name,spend,impressions,reach,clicks,ctr,cpc,cpm,frequency,"
+          "actions,video_thruplay_watched_actions")
 TOP_N = 25  # creatives per account, sorted by spend
 
 # action_type values counted as an app install (varies by campaign setup)
@@ -112,8 +113,13 @@ def fetch_creatives(account_id, date_preset):
         spend = round(float(row.get("spend", 0) or 0), 2)
         freq = float(row.get("frequency") or (impr / reach if reach else 0))
         installs = _sum(INSTALL_ACTIONS)
-        # post engagement excluding 3-second video views (video_view = 3s views)
-        engagement = max(_sum(("post_engagement",)) - _sum(("video_view",)), 0)
+        # 3-second video plays (Meta calls action_type "video_view" the 3s metric)
+        video_3s = _sum(("video_view",))
+        # ThruPlay = watched to completion or >=15s; separate insights field (a list)
+        thruplay = sum(int(float(a.get("value", 0) or 0))
+                       for a in (row.get("video_thruplay_watched_actions") or []))
+        # post engagement excluding 3-second video views
+        engagement = max(_sum(("post_engagement",)) - video_3s, 0)
         rows.append({
             "id":          row.get("ad_id", ""),
             "name":        row.get("ad_name", ""),
@@ -129,6 +135,10 @@ def fetch_creatives(account_id, date_preset):
             "cpi":         round(spend / installs, 2) if installs else 0,
             "engagement":  engagement,
             "eng_rate":    round(engagement / impr * 100, 2) if impr else 0,
+            "video_3s":    video_3s,
+            "thruplay":    thruplay,
+            "hook_rate":   round(video_3s / impr * 100, 2) if impr else 0,
+            "hold_rate":   round(thruplay / impr * 100, 2) if impr else 0,
         })
     return rows
 

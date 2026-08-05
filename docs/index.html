@@ -142,6 +142,8 @@ function withRates(g) {
     frequency: g.reach ? g.impressions / g.reach : 0,
     cpi,
     eng_rate: g.impressions ? g.engagement / g.impressions * 100 : 0,
+    hook_rate: g.impressions ? (g.video_3s || 0) / g.impressions * 100 : 0,
+    hold_rate: g.impressions ? (g.thruplay || 0) / g.impressions * 100 : 0,
     spend_vnd: g.spend * SGD_TO_VND,
     cpi_vnd: cpi * SGD_TO_VND,
     format: formats.length === 1 ? formats[0] : (formats.length > 1 ? "Mixed" : (g.format || "Other")),
@@ -157,9 +159,10 @@ function aggregateBy(creatives, keyFn) {
   creatives.forEach(c => {
     const key = keyFn(c);
     const g = map.get(key) || {name: key, ads: 0, spend: 0, impressions: 0, reach: 0, clicks: 0,
-      installs: 0, engagement: 0, prev_spend: 0, prev_impressions: 0, prev_clicks: 0, prev_installs: 0, _formats: new Set()};
+      installs: 0, engagement: 0, video_3s: 0, thruplay: 0, prev_spend: 0, prev_impressions: 0, prev_clicks: 0, prev_installs: 0, _formats: new Set()};
     g.ads++; g.spend += c.spend; g.impressions += c.impressions; g.reach += c.reach;
     g.clicks += c.clicks; g.installs += (c.installs || 0); g.engagement += (c.engagement || 0);
+    g.video_3s += (c.video_3s || 0); g.thruplay += (c.thruplay || 0);
     g.prev_spend += (c.prev_spend || 0); g.prev_impressions += (c.prev_impressions || 0);
     g.prev_clicks += (c.prev_clicks || 0); g.prev_installs += (c.prev_installs || 0);
     g._formats.add(c.format || "Other");
@@ -178,6 +181,8 @@ function normalize(c) {
   const engagement = c.engagement || 0;
   return {...c, ads: 1, installs, cpi, engagement, format: c.format || "Other",
     eng_rate: c.eng_rate != null ? c.eng_rate : (c.impressions ? engagement / c.impressions * 100 : 0),
+    hook_rate: c.hook_rate != null ? c.hook_rate : (c.impressions ? (c.video_3s || 0) / c.impressions * 100 : 0),
+    hold_rate: c.hold_rate != null ? c.hold_rate : (c.impressions ? (c.thruplay || 0) / c.impressions * 100 : 0),
     spend_vnd: c.spend * SGD_TO_VND, cpi_vnd: cpi * SGD_TO_VND,
     ...deltas(c.ctr || 0, cpi, c.prev_impressions || 0, c.prev_clicks || 0, c.prev_spend || 0, c.prev_installs || 0)};
 }
@@ -292,6 +297,8 @@ const COLS = [
   {k: "cpm", label: "CPM", f: fmtMoney},
   {k: "engagement", label: "Post Eng.", f: fmtDash(fmtInt)},
   {k: "eng_rate", label: "ER", f: fmtDash(fmtPct)},
+  {k: "hook_rate", label: "Hook", f: fmtDash(fmtPct)},
+  {k: "hold_rate", label: "Hold", f: fmtDash(fmtPct)},
   {k: "installs", label: "Installs", f: fmtDash(fmtInt)},
   {k: "cpi", label: "CPI", f: fmtDash(fmtMoney), d: "cpi_d", goodDown: true},
   {k: "cpi_vnd", label: "CPI (₫)", f: fmtDash(fmtVnd)},
