@@ -41,7 +41,7 @@ OUTPUT SHAPE
     "generated_at": "...Z",
     "data_through":  "YYYY-MM-DD",   # latest sheet day
     "install_through": "YYYY-MM-DD", # latest Airbridge day
-    "accounts": ["Chotot_app_pty", ...],           # ordered by total spend desc
+    "accounts": [{"name":"Chotot_app_pty","phase":"App"}, ...],  # App phase first, then Demand
     "dims": { "<cid>_<agid>": {"acct","camp","ag","cid","agid"} },
     "by_day": { "YYYY-MM-DD": { "<cid>_<agid>": [cost, impr, clicks, installs] } }
   }
@@ -55,6 +55,23 @@ import pathlib
 
 OUT_PATH = pathlib.Path(__file__).parent / "docs" / "data" / "google_data.json"
 KEEP_DAYS = 75
+
+# Phase per Google Ads account (from Duyen's master account list, "Phase" col).
+# "App" = app-install buys, "Demand" = DAU / re-engagement / lead-gen. Drives the
+# APP/DEMAND tab tag + grouping (App accounts listed first). Default "Demand".
+PHASE = {
+    "Chotot_app_pty": "App",
+    "Chotot_app_veh": "App",
+    "Chotot_app_job": "App",
+    "Chotot_Growth_New": "App",
+    "Chotot_JOB_VND": "Demand",
+    "Chotot_JOB_VND_Focus": "Demand",
+    "Chotot_VEH_DAU_New": "Demand",
+    "Chotot_GDS_ELT_DAU_New": "Demand",
+    "Chotot_PTY_DAU_New": "Demand",
+    "Chotot_PTY_Seller_New": "Seller",
+}
+PHASE_ORDER = {"App": 0, "Demand": 1, "Seller": 2}
 
 
 def _num(s):
@@ -156,12 +173,18 @@ def main():
         if merged:
             by_day[day] = merged
 
-    # Order accounts by total spend desc (nicer default sub-tab order).
+    # Order accounts: App phase first, then Demand, then Seller/other; within
+    # each phase by total spend desc. Each account carries its phase for the
+    # APP/DEMAND tab tag.
     acct_spend = {}
     for day, m in by_day.items():
         for key, v in m.items():
             acct_spend[dims[key]["acct"]] = acct_spend.get(dims[key]["acct"], 0) + v[0]
-    accounts = [a for a, _ in sorted(acct_spend.items(), key=lambda kv: -kv[1])]
+    accounts = [
+        {"name": a, "phase": PHASE.get(a, "Demand")}
+        for a in sorted(acct_spend,
+                        key=lambda a: (PHASE_ORDER.get(PHASE.get(a, "Demand"), 9), -acct_spend[a]))
+    ]
 
     out = {
         "generated_at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),

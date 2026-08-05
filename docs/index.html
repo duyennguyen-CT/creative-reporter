@@ -823,7 +823,7 @@ function googleAccountPanelHTML(acc) {
 function applyRangeGoogle(key) {
   curRange = key;
   const byAcct = ggWindow(key);
-  DATA = {accounts: GG.accounts.map(a => ({kind: "account", label: a, group: "GOOGLE", creatives: byAcct.get(a) || []}))};
+  DATA = {accounts: GG.accounts.map(a => ({kind: "account", label: a.name, group: (a.phase || "").toUpperCase(), creatives: byAcct.get(a.name) || []}))};
   DATA.tabs = DATA.accounts;
   activeIdx = Math.min(Math.max(activeIdx, 0), DATA.tabs.length - 1);
   document.getElementById("period").textContent = RANGES[key].period_label || "";
