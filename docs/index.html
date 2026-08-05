@@ -39,6 +39,14 @@
   }
   .tab.active { background: var(--accent); color: #fff; border-color: var(--accent); }
   .tab .g { font-size: 10px; opacity: .7; margin-left: 6px; }
+  .tab-camp { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .tab-camp.active { background: var(--accent); color: #fff; }
+  .camp-note { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 12px; padding: 12px 16px; margin-bottom: 16px; font-size: 13px; line-height: 1.5; }
+  .camp-sec { margin-bottom: 26px; }
+  .sec-head { display: flex; align-items: baseline; gap: 10px; margin: 4px 0 10px; padding-bottom: 6px; border-bottom: 2px solid var(--accent); }
+  .sec-head b { font-size: 15px; }
+  .sec-head span { color: var(--muted); font-size: 12px; }
+  .empty { padding: 22px; text-align: center; color: var(--muted); font-size: 13px; }
   .controls { display: flex; align-items: center; gap: 8px; margin: 4px 0 14px; }
   .ctl-label { font-size: 12px; color: var(--muted); }
   .ctl { border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-size: 12px; color: var(--muted); }
@@ -427,8 +435,8 @@ function accountInsightsHTML(acc) {
 }
 
 function renderTabs() {
-  document.getElementById("tabs").innerHTML = DATA.accounts.map((a, i) =>
-    `<div class="tab ${i === activeIdx ? "active" : ""}" onclick="selectTab(${i})">${a.label}<span class="g">${a.group || ""}</span></div>`
+  document.getElementById("tabs").innerHTML = DATA.tabs.map((a, i) =>
+    `<div class="tab ${i === activeIdx ? "active" : ""} ${a.kind === "campaign" ? "tab-camp" : ""}" onclick="selectTab(${i})">${a.label}<span class="g">${a.kind === "campaign" ? "CAMPAIGN" : (a.group || "")}</span></div>`
   ).join("");
 }
 
@@ -526,8 +534,9 @@ function deltaBadge(pct, goodDown) {
   return ` <span class="delta ${cls}" title="vs previous period">${up ? "▲" : "▼"}${Math.abs(pct).toFixed(0)}%</span>`;
 }
 
-function renderPanel() {
-  const acc = DATA.accounts[activeIdx];
+// Build the insights + format-breakdown + detail-table HTML for one account
+// (or one campaign section, which is shaped like an account: {label,group,creatives}).
+function accountPanelHTML(acc) {
   const t = accountTotals(acc);
   const byFormat = viewMode === "format";
 
@@ -555,7 +564,7 @@ function renderPanel() {
       </div>`;
   }
 
-  document.getElementById("panel").innerHTML = accountInsightsHTML(acc) + breakdown + `
+  return accountInsightsHTML(acc) + breakdown + `
     <div class="panel">
       <div class="panel-head">
         <b>${acc.label}</b>
@@ -570,11 +579,64 @@ function renderPanel() {
     </div>`;
 }
 
+function renderPanel() {
+  const tab = DATA.tabs[activeIdx];
+  const panel = document.getElementById("panel");
+  if (!tab) { panel.innerHTML = ""; return; }
+
+  if (tab.kind === "campaign") {
+    // Campaign report: one shared-theme campaign split by the team running it.
+    const note = `<div class="camp-note">📌 <b>${tab.title}</b> — chiến dịch Brand team (vertical PTY), sync từ awareness → app install (install dùng chung asset/theme của campaign). Tách theo team chạy:</div>`;
+    const secs = tab.sections.map(s => {
+      const head = `<div class="sec-head"><b>${s.label}</b><span>${s.creatives.length} creatives</span></div>`;
+      const body = s.creatives.length
+        ? accountPanelHTML({label: s.label, group: s.group, creatives: s.creatives})
+        : `<div class="panel"><div class="empty">Không có creative nào khớp trong khoảng thời gian này.</div></div>`;
+      return `<div class="camp-sec">${head}${body}</div>`;
+    }).join("");
+    panel.innerHTML = note + secs;
+    return;
+  }
+
+  panel.innerHTML = accountPanelHTML(tab);
+}
+
+// Campaign report tabs: Brand-team themed campaigns (vertical PTY) that sync
+// awareness -> app install. Each is split into the Brand-run creatives and the
+// Growth-team app-install creatives. Growth installs live in the pty_app account
+// and share the theme keyword; Brand creatives live in the BRAND-group accounts.
+const GROWTH_APP_ACCT = "Chotot_pty_app";
+const CAMPAIGN_DEFS = [
+  {title: "Thổ Địa", tab: "🎯 Thổ Địa", brandKw: "thodiacamp", growthKw: "thodia"},
+  {title: "Back to School", tab: "🎯 Back to School", brandKw: "b2s", growthKw: "b2s"},
+];
+
+function buildCampaignTabs(accounts) {
+  // Flatten creatives, tagging each with its account label + group.
+  const flat = [];
+  accounts.forEach(a => a.creatives.forEach(c =>
+    flat.push({...c, _acct: a.label, _group: (a.group || "").toUpperCase()})));
+  const has = (c, kw) => (c.campaign || "").toLowerCase().includes(kw.toLowerCase());
+  return CAMPAIGN_DEFS.map(def => ({
+    kind: "campaign",
+    label: def.tab,
+    title: def.title,
+    sections: [
+      {label: "Brand — Awareness", group: "BRAND",
+       creatives: flat.filter(c => c._group === "BRAND" && has(c, def.brandKw))},
+      {label: "Growth — App install", group: "GROWTH",
+       creatives: flat.filter(c => c._acct === GROWTH_APP_ACCT && has(c, def.growthKw))},
+    ],
+  }));
+}
+
 function applyRange(key) {
   curRange = key;
   applyAirbridge(key);
-  DATA = {accounts: RANGES[key].accounts};
-  activeIdx = Math.min(Math.max(activeIdx, 0), DATA.accounts.length - 1);
+  const accounts = RANGES[key].accounts;
+  DATA = {accounts, campaigns: buildCampaignTabs(accounts)};
+  DATA.tabs = [...accounts.map(a => ({kind: "account", ...a})), ...DATA.campaigns];
+  activeIdx = Math.min(Math.max(activeIdx, 0), DATA.tabs.length - 1);
   document.getElementById("period").textContent = RANGES[key].period_label || "";
   renderCards(); renderInsights(); renderTabs(); renderControls(); renderPanel();
 }
