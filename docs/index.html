@@ -55,6 +55,9 @@
   th.sorted::after { content: " ▾"; color: var(--accent); }
   tbody tr:hover { background: #faf9ff; }
   td.name { font-weight: 600; max-width: 240px; overflow: hidden; text-overflow: ellipsis; }
+  td.name a.post-link { color: inherit; text-decoration: none; }
+  td.name a.post-link:hover { color: var(--accent); text-decoration: underline; }
+  td.name a.post-link .ext { color: var(--accent); font-weight: 700; opacity: .7; }
   td.campaign { text-align: left; color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .f-green { background: #dcfce7; color: var(--green); }
@@ -233,7 +236,8 @@ function aggregateBy(creatives, keyFn) {
   creatives.forEach(c => {
     const key = keyFn(c);
     const g = map.get(key) || {name: key, ads: 0, spend: 0, impressions: 0, reach: 0, clicks: 0,
-      installs: 0, engagement: 0, video_3s: 0, thruplay: 0, prev_spend: 0, prev_impressions: 0, prev_clicks: 0, prev_installs: 0, _formats: new Set(), _campaigns: new Set()};
+      installs: 0, engagement: 0, video_3s: 0, thruplay: 0, prev_spend: 0, prev_impressions: 0, prev_clicks: 0, prev_installs: 0, post_url: "", _formats: new Set(), _campaigns: new Set()};
+    if (!g.post_url && c.post_url) g.post_url = c.post_url;
     g.ads++; g.spend += c.spend; g.impressions += c.impressions; g.reach += c.reach;
     g.clicks += c.clicks; g.installs += (c.installs || 0); g.engagement += (c.engagement || 0);
     g.video_3s += (c.video_3s || 0); g.thruplay += (c.thruplay || 0);
@@ -496,7 +500,11 @@ function tableHTML(rows, cols, sortable) {
   const body = rows.map(r => "<tr>" + cols.map(c => {
     if (c.k === "name") {
       const tag = r.ads > 1 ? `<span class="pill">×${r.ads} ads</span>` : "";
-      return `<td class="name" title="${r.name}">${r.name}${tag}</td>`;
+      // Linkify the creative name to its FB post (skip the "Format" first column).
+      const nm = (c.label !== "Format" && r.post_url)
+        ? `<a class="post-link" href="${r.post_url}" target="_blank" rel="noopener" title="Xem post trên Facebook: ${r.name}">${r.name} <span class="ext">↗</span></a>`
+        : r.name;
+      return `<td class="name" title="${r.name}">${nm}${tag}</td>`;
     }
     if (c.k === "campaign") {
       const cp = r.campaign || "—";

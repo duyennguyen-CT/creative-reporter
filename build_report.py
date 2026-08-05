@@ -181,21 +181,38 @@ def classify_format(creative):
     return "Other"
 
 
-def fetch_formats(ad_ids):
-    """Return {ad_id: format} by batch-reading each ad's creative object."""
+def post_url_from(creative):
+    """Build a clickable Facebook (or Instagram) permalink for the ad's post.
+
+    `effective_object_story_id` is "<page_id>_<post_id>" -> the canonical FB
+    permalink is facebook.com/<page_id>/posts/<post_id> (same post the Ads
+    Manager "Facebook Post with Comments" link opens). Falls back to the
+    Instagram permalink when there's no FB page post.
+    """
+    osid = creative.get("effective_object_story_id")
+    if osid and "_" in osid:
+        pid, post = osid.split("_", 1)
+        return f"https://www.facebook.com/{pid}/posts/{post}"
+    return creative.get("instagram_permalink_url") or ""
+
+
+def fetch_creative_meta(ad_ids):
+    """Return {ad_id: {format, post_url}} by batch-reading each ad's creative."""
     out = {}
     ids = list(ad_ids)
     for i in range(0, len(ids), 50):
         batch = ids[i:i + 50]
         params = {
             "ids": ",".join(batch),
-            "fields": "creative{object_type,video_id,image_hash,object_story_spec}",
+            "fields": "creative{object_type,video_id,image_hash,object_story_spec,"
+                      "effective_object_story_id,instagram_permalink_url}",
             "access_token": TOKEN,
         }
         data = _get(META_GRAPH_URL, params)
         for ad_id, node in (data or {}).items():
             if isinstance(node, dict):
-                out[ad_id] = classify_format(node.get("creative") or {})
+                cr = node.get("creative") or {}
+                out[ad_id] = {"format": classify_format(cr), "post_url": post_url_from(cr)}
     return out
 
 
@@ -319,13 +336,16 @@ def build_from_api():
             "accounts": accounts,
         }
 
-    # Creative format is an attribute of the ad, not of a time range — fetch once.
-    print(f"Resolving creative formats for {len(ad_ids)} ads ...")
-    fmt_map = fetch_formats(ad_ids)
+    # Creative format + post permalink are attributes of the ad, not a time
+    # range — fetch once and attach to every occurrence of the ad.
+    print(f"Resolving creative meta (format + post url) for {len(ad_ids)} ads ...")
+    meta_map = fetch_creative_meta(ad_ids)
     for rng in ranges.values():
         for acc in rng["accounts"]:
             for c in acc["creatives"]:
-                c["format"] = fmt_map.get(c["id"], "Other")
+                m = meta_map.get(c["id"]) or {}
+                c["format"] = m.get("format", "Other")
+                c["post_url"] = m.get("post_url", "")
 
     return {
         "generated_at": datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
