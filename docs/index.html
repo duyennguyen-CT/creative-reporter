@@ -71,7 +71,11 @@
   td.name a.post-link { color: inherit; text-decoration: none; }
   td.name a.post-link:hover { color: var(--accent); text-decoration: underline; }
   td.name a.post-link .ext { color: var(--accent); font-weight: 700; opacity: .7; }
-  td.campaign { text-align: left; color: var(--muted); max-width: 220px; overflow: hidden; text-overflow: ellipsis; }
+  td.campaign { text-align: left; color: var(--muted); max-width: 240px; }
+  td.campaign .camp-inner { display: flex; align-items: center; gap: 6px; }
+  td.campaign .camp-txt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .copy-btn { flex: none; border: none; background: transparent; cursor: pointer; color: var(--muted); font-size: 12px; padding: 0 2px; opacity: .55; line-height: 1; }
+  .copy-btn:hover { opacity: 1; color: var(--accent); }
   .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 12px; font-weight: 600; }
   .f-green { background: #dcfce7; color: var(--green); }
   .f-amber { background: #fef3c7; color: var(--amber); }
@@ -561,7 +565,11 @@ function tableHTML(rows, cols, sortable, goodNames) {
     }
     if (c.k === "campaign") {
       const cp = r.campaign || "—";
-      return `<td class="campaign" title="${cp}">${cp}</td>`;
+      const safe = String(cp).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+      const btn = cp !== "—"
+        ? `<button class="copy-btn" title="Copy tên campaign" onclick="copyCamp(this, event)">⧉</button>`
+        : "";
+      return `<td class="campaign" title="${safe}"><div class="camp-inner"><span class="camp-txt">${cp}</span>${btn}</div></td>`;
     }
     const val = c.f ? c.f(r[c.k]) : r[c.k];
     if (c.d) {
@@ -571,6 +579,23 @@ function tableHTML(rows, cols, sortable, goodNames) {
     return `<td>${val}</td>`;
   }).join("") + "</tr>").join("");
   return `<div style="overflow-x:auto"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+// Copy the full campaign name (read from the cell's title) to the clipboard,
+// with a brief ✓ confirmation on the button.
+function copyCamp(btn, ev) {
+  if (ev) ev.stopPropagation();
+  const cell = btn.closest("td.campaign");
+  const text = cell ? cell.getAttribute("title") : "";
+  const done = () => { const o = btn.textContent; btn.textContent = "✓"; setTimeout(() => { btn.textContent = o; }, 1000); };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => done());
+  } else {
+    const ta = document.createElement("textarea");
+    ta.value = text; document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); } catch (e) {}
+    document.body.removeChild(ta); done();
+  }
 }
 
 // Small ▲/▼ % change badge vs previous period. goodDown=true means a drop is good (e.g. CPI).
