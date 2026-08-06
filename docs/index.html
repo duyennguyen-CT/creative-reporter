@@ -131,6 +131,7 @@ let RAW = null, RANGES = {}, curRange = null;
 let DATA = null, activeIdx = 0, sortKey = "spend", sortDir = -1, viewMode = "creative";
 let showCampaign = false;  // Campaign column is collapsed by default (toggle to show)
 let campAppTab = "meta";   // Campaign tab: App install sub-tab — "meta" (FB) | "google" (GG)
+let campDemandTab = "meta"; // Campaign tab: Demand sub-tab — "meta" (FB) | "google" (GG)
 let AB = null;  // Airbridge MMP installs snapshot (docs/data/airbridge_installs.json)
 let GG = null;  // Google Ads snapshot (docs/data/google_data.json): sheet cost + Airbridge installs
 let platform = "meta";  // top-level view: "meta" (default) | "google"
@@ -490,6 +491,7 @@ function sortBy(k) { if (sortKey === k) sortDir *= -1; else { sortKey = k; sortD
 function setView(m) { viewMode = m; sortKey = "spend"; sortDir = -1; renderControls(); renderPanel(); }
 function toggleCampaign() { showCampaign = !showCampaign; renderControls(); renderPanel(); }
 function setCampAppTab(t) { campAppTab = t; sortKey = "spend"; sortDir = -1; renderPanel(); }
+function setCampDemandTab(t) { campDemandTab = t; sortKey = "spend"; sortDir = -1; renderPanel(); }
 
 const COLS = [
   {k: "name", label: "Creative"},
@@ -666,14 +668,17 @@ function renderPanel() {
   }
 
   if (tab.kind === "campaign") {
-    // Campaign report: one shared-theme campaign. Brand awareness stands on its
-    // own; the app-install part is FB (Meta) + GG (Google) behind a sub-tab
+    // Campaign report: one shared-theme campaign flowing Brand (awareness) ->
+    // App install -> Demand (Drive DAU / DAU-with-lead). Brand stands on its own;
+    // App install and Demand each split FB (Meta) vs GG (Google) behind a sub-tab
     // switch so they're compact instead of stacked full-height.
-    const note = `<div class="camp-note">📌 <b>${tab.title}</b> — chiến dịch sync từ awareness → app install (dùng chung asset/theme). App install tách FB (Meta) vs GG (Google):</div>`;
+    const note = `<div class="camp-note">📌 <b>${tab.title}</b> — flow: awareness → app install → demand (dùng chung asset/theme). App install & Demand tách FB (Meta) vs GG (Google):</div>`;
 
-    const brand = tab.sections.find(s => s.group === "BRAND");
-    const fb = tab.sections.find(s => s.platform === "meta" && s.group === "GROWTH");
-    const gg = tab.sections.find(s => s.platform === "google");
+    const brand = tab.sections.find(s => s.phase === "brand");
+    const appFb = tab.sections.find(s => s.phase === "app" && s.platform === "meta");
+    const appGg = tab.sections.find(s => s.phase === "app" && s.platform === "google");
+    const demFb = tab.sections.find(s => s.phase === "demand" && s.platform === "meta");
+    const demGg = tab.sections.find(s => s.phase === "demand" && s.platform === "google");
 
     // A section's detail body (Meta creatives vs Google ad groups), or an empty note.
     const bodyOf = s => {
@@ -684,21 +689,25 @@ function renderPanel() {
         : accountPanelHTML({label: s.label, group: s.group, creatives: s.creatives});
     };
 
+    // A phase (App install / Demand) with FB / GG sub-tabs.
+    const phaseBlock = (title, fb, gg, cur, setter) => {
+      const active = cur === "google" ? gg : fb;
+      const subtabs = `<div class="sec-head" style="justify-content:space-between">`
+        + `<b>${title}</b>`
+        + `<div style="display:flex;gap:8px">`
+        + `<button class="ctl${cur === "meta" ? " active" : ""}" onclick="${setter}('meta')">FB · ${fb ? fb.creatives.length : 0}</button>`
+        + `<button class="ctl${cur === "google" ? " active" : ""}" onclick="${setter}('google')">GG · ${gg ? gg.creatives.length : 0}</button>`
+        + `</div></div>`;
+      return `<div class="camp-sec">${subtabs}${bodyOf(active)}</div>`;
+    };
+
     const brandBlock = brand
       ? `<div class="camp-sec"><div class="sec-head"><b>Brand — Awareness</b><span>${brand.creatives.length} creatives</span></div>${bodyOf(brand)}</div>`
       : "";
+    const appBlock = phaseBlock("App install", appFb, appGg, campAppTab, "setCampAppTab");
+    const demandBlock = phaseBlock("Demand — Drive DAU / DAU with lead", demFb, demGg, campDemandTab, "setCampDemandTab");
 
-    // App install with FB / GG sub-tabs.
-    const active = campAppTab === "google" ? gg : fb;
-    const subtabs = `<div class="sec-head" style="justify-content:space-between">`
-      + `<b>App install</b>`
-      + `<div style="display:flex;gap:8px">`
-      + `<button class="ctl${campAppTab === "meta" ? " active" : ""}" onclick="setCampAppTab('meta')">FB · ${fb ? fb.creatives.length : 0}</button>`
-      + `<button class="ctl${campAppTab === "google" ? " active" : ""}" onclick="setCampAppTab('google')">GG · ${gg ? gg.creatives.length : 0}</button>`
-      + `</div></div>`;
-    const appBlock = `<div class="camp-sec">${subtabs}${bodyOf(active)}</div>`;
-
-    panel.innerHTML = note + brandBlock + appBlock;
+    panel.innerHTML = note + brandBlock + appBlock + demandBlock;
     return;
   }
 
@@ -711,13 +720,45 @@ function renderPanel() {
 // and share the theme keyword; Brand creatives live in the BRAND-group accounts.
 const GROWTH_APP_ACCT = "Chotot_pty_app";   // Meta (FB) app-install account
 const GG_APP_ACCT = "Chotot_app_pty";       // Google app-install account
-// Each themed campaign matches by keyword across three sources: Meta Brand
-// creatives (brandKw), Meta Growth app-install creatives (growthKw, in the
-// pty_app account), and Google app-install campaigns (ggKw, matched on the GG
-// campaign name). App install is then split FB (Meta) vs GG (Google).
+const DEMAND_FB_ACCT = "Chotot_pty_sgd";    // Meta (FB) demand (Drive DAU / DAU-with-lead) account
+const DEMAND_GG_ACCT = "Chotot_PTY_DAU_New"; // Google demand account
+// Each themed campaign is a flow: Brand (awareness) -> App install -> Demand
+// (Drive DAU / DAU-with-lead). Matching sources:
+//  - brandKw: Meta Brand creatives (awareness).
+//  - growthKw / ggKw: Meta + Google app-install campaigns (pty_app / app_pty).
+//  - demandFbKw | demandFbCamps: Meta demand creatives in the pty_sgd account
+//    (keyword when a single campaign, else an explicit campaign-name allow-list).
+//  - demandGgCamps: explicit Google demand campaign names in the PTY_DAU_New
+//    account (exact list — the DAU account holds many other campaigns, so we
+//    can't keyword-match). App install AND Demand are each split FB vs GG.
 const CAMPAIGN_DEFS = [
-  {title: "Thổ Địa", tab: "🎯 Thổ Địa", brandKw: "thodiacamp", growthKw: "thodia", ggKw: "thodia"},
-  {title: "Back to School", tab: "🎯 Back to School", brandKw: "b2s", growthKw: "b2s", ggKw: "b2s"},
+  {
+    title: "Thổ Địa", tab: "🎯 Thổ Địa", brandKw: "thodiacamp", growthKw: "thodia", ggKw: "thodia",
+    demandFbKw: "thodia", demandFbCamps: null,
+    demandGgCamps: [
+      "digital_dau_pty_sell_house_q12_search_lead_2026",
+      "digital_dau_pty_sell_apartment_q12_search_lead_2026",
+      "digital_dau_pty_sell_houses_q12_pmax_lead_2026",
+    ],
+  },
+  {
+    title: "Back to School", tab: "🎯 Back to School", brandKw: "b2s", growthKw: "b2s", ggKw: "b2s",
+    demandFbKw: null,
+    demandFbCamps: [
+      "digital_fb_pty_let_apartment_lead",
+      "digital_fb_pty_let_room_lead",
+      "digital_fb_pty_let_house_lead",
+    ],
+    demandGgCamps: [
+      "digital_dau_pty_let_apartment_hcm_search_lead_2026",
+      "digital_dau_pty_let_house_hcm_search_lead_2026",
+      "digital_dau_pty_let_room_hcm_search_lead_2026",
+      "digital_dau_pty_let_vn_pmax_adview_2026",
+      "digital_dau_pty_let_room_hcm_pmax_lead_2025",
+      "digital_dau_pty_let_houses_hcm_pmax_lead_2026",
+      "digital_dau_pty_let_apartment_hcm_pmax_lead_2025",
+    ],
+  },
 ];
 
 function buildCampaignTabs(accounts) {
@@ -726,22 +767,34 @@ function buildCampaignTabs(accounts) {
   accounts.forEach(a => a.creatives.forEach(c =>
     flat.push({...c, _acct: a.label, _group: (a.group || "").toUpperCase()})));
   const has = (c, kw) => (c.campaign || "").toLowerCase().includes(kw.toLowerCase());
-  // Google ad-group rows for the current window (VND-native), restricted to the
-  // GG app-install account, tagged with campaign name for the theme keyword match.
-  const ggFlat = [];
-  if (GG) ((ggWindow(curRange).get(GG_APP_ACCT)) || []).forEach(r => ggFlat.push(r));
+  const eqAny = (c, names) => names.some(n => (c.campaign || "").toLowerCase() === n.toLowerCase());
+  // Google ad-group rows for the current window (VND-native). App install lives
+  // in the app_pty account (keyword match); Demand lives in the PTY_DAU_New
+  // account (exact campaign-name match — that account holds many campaigns).
+  const gw = GG ? ggWindow(curRange) : new Map();
+  const ggAppFlat = GG ? (gw.get(GG_APP_ACCT) || []) : [];
+  const ggDemandFlat = GG ? (gw.get(DEMAND_GG_ACCT) || []) : [];
   const ggHas = (r, kw) => (r.campaign || "").toLowerCase().includes(kw.toLowerCase());
+  const ggEqAny = (r, names) => names.some(n => (r.campaign || "").toLowerCase() === n.toLowerCase());
+  // Demand FB creatives: keyword when one campaign, else an explicit allow-list.
+  const demandFbMatch = (c, def) => def.demandFbCamps
+    ? eqAny(c, def.demandFbCamps)
+    : (def.demandFbKw ? has(c, def.demandFbKw) : false);
   return CAMPAIGN_DEFS.map(def => ({
     kind: "campaign",
     label: def.tab,
     title: def.title,
     sections: [
-      {label: "Brand — Awareness", group: "BRAND", platform: "meta",
+      {label: "Brand — Awareness", group: "BRAND", platform: "meta", phase: "brand",
        creatives: flat.filter(c => c._group === "BRAND" && has(c, def.brandKw))},
-      {label: "App install — FB", group: "GROWTH", platform: "meta",
+      {label: "App install — FB", group: "GROWTH", platform: "meta", phase: "app",
        creatives: flat.filter(c => c._acct === GROWTH_APP_ACCT && has(c, def.growthKw))},
-      {label: "App install — GG", group: "GROWTH", platform: "google",
-       creatives: ggFlat.filter(r => ggHas(r, def.ggKw))},
+      {label: "App install — GG", group: "GROWTH", platform: "google", phase: "app",
+       creatives: ggAppFlat.filter(r => ggHas(r, def.ggKw))},
+      {label: "Demand — FB", group: "GROWTH", platform: "meta", phase: "demand",
+       creatives: flat.filter(c => c._acct === DEMAND_FB_ACCT && demandFbMatch(c, def))},
+      {label: "Demand — GG", group: "GROWTH", platform: "google", phase: "demand",
+       creatives: ggDemandFlat.filter(r => ggEqAny(r, def.demandGgCamps))},
     ],
   }));
 }
