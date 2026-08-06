@@ -568,19 +568,10 @@ function accountPanelHTML(acc) {
   const cols = byFormat ? formatColsFor(acc) : colsFor(acc);
   const unit = viewMode === "creative" ? "creatives" : byFormat ? "formats" : "ads";
 
-  // Breakdown-by-format summary (always sorted by spend; hidden when the
-  // detail table already IS the format view, to avoid showing it twice).
-  let breakdown = "";
-  if (!byFormat) {
-    const fmtRows = aggregateByFormat(acc.creatives).sort((a, b) => b.spend - a.spend);
-    breakdown = `
-      <div class="panel" style="margin-bottom:16px">
-        <div class="panel-head"><b>Breakdown by format</b><span>${fmtRows.length} formats</span></div>
-        ${tableHTML(fmtRows, formatColsFor(acc), false)}
-      </div>`;
-  }
+  // (The standalone "Breakdown by format" summary was removed — it duplicated
+  // the dedicated "By format" view, so it's redundant in the creative/ad views.)
 
-  return accountInsightsHTML(acc) + breakdown + `
+  return accountInsightsHTML(acc) + `
     <div class="panel">
       <div class="panel-head">
         <b>${acc.label}</b>
