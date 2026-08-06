@@ -999,9 +999,12 @@ const DCOLS = [
   {k: "cpl", label: "CPL (₫)", f: fmtDash(fmtVnd), d: "cpl_d", goodDown: true},
   {k: "dwl", label: "DWL", f: fmtDash(fmtInt)},
   {k: "dau", label: "DAU", f: fmtDash(fmtInt)},
+  // Add-on secondary metric: installs these DAU/lead buys still drove (Airbridge).
+  {k: "installs", label: "Install", f: fmtDash(fmtInt)},
+  {k: "cpi", label: "CPI (₫)", f: fmtDash(fmtVnd), d: "cpi_d", goodDown: true},
 ];
 
-// Sum demand_data.by_day over [since, until] -> Map<key, [cost,impr,clk,lead,dwl,dau]>.
+// Sum demand_data.by_day over [since, until] -> Map<key, [cost,impr,clk,lead,dwl,dau,installs]>.
 function demAgg(since, until) {
   const agg = new Map();
   if (!DEM || !DEM.by_day) return agg;
@@ -1009,8 +1012,8 @@ function demAgg(since, until) {
     if (day < since || day > until) continue;
     const m = DEM.by_day[day];
     for (const k in m) {
-      const v = m[k], t = agg.get(k) || [0, 0, 0, 0, 0, 0];
-      for (let i = 0; i < 6; i++) t[i] += v[i];
+      const v = m[k], t = agg.get(k) || [0, 0, 0, 0, 0, 0, 0];
+      for (let i = 0; i < v.length; i++) t[i] += v[i];
       agg.set(k, t);
     }
   }
@@ -1026,27 +1029,31 @@ function demandWindow(key) {
   const rows = [];
   agg.forEach((v, k) => {
     const dim = DEM.dims[k]; if (!dim) return;
-    const [cost, impr, clk, lead, dwl, dau] = v;
-    if (!(cost || impr || clk || lead)) return;
+    const [cost, impr, clk, lead, dwl, dau, installs = 0] = v;
+    if (!(cost || impr || clk || lead || installs)) return;
     const ctr = impr ? clk / impr * 100 : 0, cpl = lead ? cost / lead : 0;
+    const cpi = installs ? cost / installs : 0;
     const p = pagg ? pagg.get(k) : null;
     const pCtr = p && p[1] ? p[2] / p[1] * 100 : 0;
     const pCpl = p && p[3] ? p[0] / p[3] : 0;
+    const pCpi = p && p[6] ? p[0] / p[6] : 0;
     rows.push({
       name: dim.campaign, campaign: dim.campaign, channel: dim.channel, ads: 1,
-      spend: cost, impressions: impr, clicks: clk, lead, dwl, dau, ctr, cpl,
+      spend: cost, impressions: impr, clicks: clk, lead, dwl, dau, installs, ctr, cpl, cpi,
       ctr_d: pCtr ? (ctr - pCtr) / pCtr * 100 : null,
       cpl_d: pCpl ? (cpl - pCpl) / pCpl * 100 : null,
+      cpi_d: pCpi ? (cpi - pCpi) / pCpi * 100 : null,
     });
   });
   return rows;
 }
 
 function demTotals(rows) {
-  const t = {spend: 0, impressions: 0, clicks: 0, lead: 0, dwl: 0, dau: 0};
-  rows.forEach(r => { t.spend += r.spend; t.impressions += r.impressions; t.clicks += r.clicks; t.lead += r.lead; t.dwl += r.dwl; t.dau += r.dau; });
+  const t = {spend: 0, impressions: 0, clicks: 0, lead: 0, dwl: 0, dau: 0, installs: 0};
+  rows.forEach(r => { t.spend += r.spend; t.impressions += r.impressions; t.clicks += r.clicks; t.lead += r.lead; t.dwl += r.dwl; t.dau += r.dau; t.installs += (r.installs || 0); });
   t.ctr = t.impressions ? t.clicks / t.impressions * 100 : 0;
   t.cpl = t.lead ? t.spend / t.lead : 0;
+  t.cpi = t.installs ? t.spend / t.installs : 0;
   t.count = rows.length;
   return t;
 }
@@ -1058,6 +1065,7 @@ function computeDemandInsights(label, rows, t) {
   out.push(`<b>${rows.length}</b> campaigns · Cost <b>${fmtVnd(t.spend)}</b>`
     + (t.lead ? ` · <b>${fmtInt(t.lead)}</b> leads @ CPL <b>${fmtVnd(t.cpl)}</b>` : " · no leads tracked")
     + ` · CTR ${fmtPct(t.ctr)}.`);
+  if (t.installs) out.push(`Add-on: các buy DAU/lead này còn kéo <b>${fmtInt(t.installs)}</b> installs (Airbridge) @ CPI <b>${fmtVnd(t.cpi)}</b>.`);
   const cand = rows.filter(c => c.lead >= 20);
   if (cand.length) {
     const best = cand.slice().sort((a, b) => a.cpl - b.cpl)[0];
@@ -1092,6 +1100,7 @@ function demandPanelHTML(sec) {
         <span>Clicks ${fmtInt(t.clicks)}</span>
         <span>CTR ${fmtPct(t.ctr)}</span>
         ${t.lead ? `<span>Lead ${fmtInt(t.lead)} @ CPL ${fmtVnd(t.cpl)}</span>` : ""}
+        ${t.installs ? `<span>Install ${fmtInt(t.installs)} @ CPI ${fmtVnd(t.cpi)}</span>` : ""}
         <span>${rows.length} campaigns</span>
       </div>
       ${tableHTML(rows, DCOLS, true)}
@@ -1149,8 +1158,9 @@ function renderCampaignCards() {
   let spendVnd = 0, impr = 0, clk = 0, ins = 0, lead = 0, count = 0;
   if (tab && tab.sections) tab.sections.forEach(s => {
     if (s.platform === "demand") {
-      // Demand (raw_retention): spend already in VND, lead-based (no installs).
-      s.creatives.forEach(c => { spendVnd += c.spend; impr += c.impressions; clk += c.clicks; lead += (c.lead || 0); count++; });
+      // Demand (raw_retention): spend already in VND, lead-based. Installs are an
+      // add-on secondary metric (Airbridge) — still roll into the Installs card.
+      s.creatives.forEach(c => { spendVnd += c.spend; impr += c.impressions; clk += c.clicks; lead += (c.lead || 0); ins += (c.installs || 0); count++; });
     } else if (s.platform === "google") {
       s.creatives.forEach(c => { spendVnd += c.spend; impr += c.impressions; clk += c.clicks; ins += c.installs; count++; });
     } else {
