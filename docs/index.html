@@ -838,7 +838,8 @@ function applyRangeGoogle(key) {
   DATA.tabs = DATA.accounts;
   activeIdx = Math.min(Math.max(activeIdx, 0), DATA.tabs.length - 1);
   document.getElementById("period").textContent = RANGES[key].period_label || "";
-  renderGoogleCards(); renderGoogleInsights(); renderTabs(); renderControls(); renderPanel();
+  document.getElementById("insights").style.display = "none";  // top summary removed; per-account insights only
+  renderGoogleCards(); renderTabs(); renderControls(); renderPanel();
 }
 
 function switchPlatform(p) {
@@ -867,7 +868,8 @@ function applyRange(key) {
   DATA.tabs = accounts.map(a => ({kind: "account", ...a}));
   activeIdx = Math.min(Math.max(activeIdx, 0), DATA.tabs.length - 1);
   document.getElementById("period").textContent = RANGES[key].period_label || "";
-  renderCards(); renderInsights(); renderTabs(); renderControls(); renderPanel();
+  document.getElementById("insights").style.display = "none";  // top summary removed; per-account insights only
+  renderCards(); renderTabs(); renderControls(); renderPanel();
 }
 
 // CAMPAIGN view: the themed Brand-team campaigns (Thổ Địa, Back to School) that
