@@ -638,12 +638,16 @@ function renderPanel() {
 
   if (tab.kind === "campaign") {
     // Campaign report: one shared-theme campaign split by the team running it.
-    const note = `<div class="camp-note">📌 <b>${tab.title}</b> — chiến dịch Brand team (vertical PTY), sync từ awareness → app install (install dùng chung asset/theme của campaign). Tách theo team chạy:</div>`;
+    const note = `<div class="camp-note">📌 <b>${tab.title}</b> — chiến dịch sync từ awareness → app install (dùng chung asset/theme). App install tách FB (Meta) vs GG (Google):</div>`;
     const secs = tab.sections.map(s => {
-      const head = `<div class="sec-head"><b>${s.label}</b><span>${s.creatives.length} creatives</span></div>`;
+      const isGG = s.platform === "google";
+      const unit = isGG ? "ad groups" : "creatives";
+      const head = `<div class="sec-head"><b>${s.label}</b><span>${s.creatives.length} ${unit}</span></div>`;
       const body = s.creatives.length
-        ? accountPanelHTML({label: s.label, group: s.group, creatives: s.creatives})
-        : `<div class="panel"><div class="empty">Không có creative nào khớp trong khoảng thời gian này.</div></div>`;
+        ? (isGG
+            ? googleAccountPanelHTML({label: s.label, creatives: s.creatives})
+            : accountPanelHTML({label: s.label, group: s.group, creatives: s.creatives}))
+        : `<div class="panel"><div class="empty">Không có ${isGG ? "campaign Google" : "creative"} nào khớp trong khoảng thời gian này.</div></div>`;
       return `<div class="camp-sec">${head}${body}</div>`;
     }).join("");
     panel.innerHTML = note + secs;
@@ -658,26 +662,37 @@ function renderPanel() {
 // Growth-team app-install creatives. Growth installs live in the pty_app account
 // and share the theme keyword; Brand creatives live in the BRAND-group accounts.
 const GROWTH_APP_ACCT = "Chotot_pty_app";
+// Each themed campaign matches by keyword across three sources: Meta Brand
+// creatives (brandKw), Meta Growth app-install creatives (growthKw, in the
+// pty_app account), and Google app-install campaigns (ggKw, matched on the GG
+// campaign name). App install is then split FB (Meta) vs GG (Google).
 const CAMPAIGN_DEFS = [
-  {title: "Thổ Địa", tab: "🎯 Thổ Địa", brandKw: "thodiacamp", growthKw: "thodia"},
-  {title: "Back to School", tab: "🎯 Back to School", brandKw: "b2s", growthKw: "b2s"},
+  {title: "Thổ Địa", tab: "🎯 Thổ Địa", brandKw: "thodiacamp", growthKw: "thodia", ggKw: "thodia"},
+  {title: "Back to School", tab: "🎯 Back to School", brandKw: "b2s", growthKw: "b2s", ggKw: "b2s"},
 ];
 
 function buildCampaignTabs(accounts) {
-  // Flatten creatives, tagging each with its account label + group.
+  // Flatten Meta creatives, tagging each with its account label + group.
   const flat = [];
   accounts.forEach(a => a.creatives.forEach(c =>
     flat.push({...c, _acct: a.label, _group: (a.group || "").toUpperCase()})));
   const has = (c, kw) => (c.campaign || "").toLowerCase().includes(kw.toLowerCase());
+  // Flatten Google ad-group rows for the current window (VND-native), each tagged
+  // with its campaign name so we can match the theme keyword.
+  const ggFlat = [];
+  if (GG) ggWindow(curRange).forEach(rows => rows.forEach(r => ggFlat.push(r)));
+  const ggHas = (r, kw) => (r.campaign || "").toLowerCase().includes(kw.toLowerCase());
   return CAMPAIGN_DEFS.map(def => ({
     kind: "campaign",
     label: def.tab,
     title: def.title,
     sections: [
-      {label: "Brand — Awareness", group: "BRAND",
+      {label: "Brand — Awareness", group: "BRAND", platform: "meta",
        creatives: flat.filter(c => c._group === "BRAND" && has(c, def.brandKw))},
-      {label: "Growth — App install", group: "GROWTH",
+      {label: "App install — FB", group: "GROWTH", platform: "meta",
        creatives: flat.filter(c => c._acct === GROWTH_APP_ACCT && has(c, def.growthKw))},
+      {label: "App install — GG", group: "GROWTH", platform: "google",
+       creatives: ggFlat.filter(r => ggHas(r, def.ggKw))},
     ],
   }));
 }
@@ -905,20 +920,26 @@ function applyRange(key) {
 // sync awareness -> app install, promoted to their own top-level section next to
 // Meta / Google. Sub-tabs = the campaigns; cards summarize the selected campaign.
 function renderCampaignCards() {
+  // Sections mix Meta (spend in SGD) and Google (spend already in VND), so we
+  // total everything in VND: Meta spend × rate + Google spend as-is.
   const tab = DATA.tabs[activeIdx];
-  const all = [];
-  if (tab && tab.sections) tab.sections.forEach(s => s.creatives.forEach(c => all.push(normalize(c))));
-  const sum = k => all.reduce((s, c) => s + (c[k] || 0), 0);
-  const spend = sum("spend"), impr = sum("impressions"), clk = sum("clicks"), ins = sum("installs");
-  const ctr = impr ? clk / impr * 100 : 0, cpi = ins ? spend / ins : 0;
+  let spendVnd = 0, impr = 0, clk = 0, ins = 0, count = 0;
+  if (tab && tab.sections) tab.sections.forEach(s => {
+    if (s.platform === "google") {
+      s.creatives.forEach(c => { spendVnd += c.spend; impr += c.impressions; clk += c.clicks; ins += c.installs; count++; });
+    } else {
+      s.creatives.forEach(c0 => { const c = normalize(c0); spendVnd += (c.spend || 0) * SGD_TO_VND; impr += c.impressions; clk += c.clicks; ins += c.installs; count++; });
+    }
+  });
+  const ctr = impr ? clk / impr * 100 : 0, cpi = ins ? spendVnd / ins : 0;
   const cards = [
-    {k: "Total Spend", v: fmtMoney(spend)},
+    {k: "Total Spend", v: fmtVnd(spendVnd)},
     {k: "Impressions", v: fmtInt(impr)},
     {k: "Clicks", v: fmtInt(clk)},
     {k: "Avg CTR", v: fmtPct(ctr)},
     {k: AB ? "Installs · Airbridge" : "Installs", v: ins ? fmtInt(ins) : "–"},
-    {k: "Avg CPI", v: cpi ? fmtVndSgd(cpi) : "–"},
-    {k: "Creatives", v: fmtInt(all.length)},
+    {k: "Avg CPI", v: cpi ? fmtVnd(cpi) : "–"},
+    {k: "Creatives", v: fmtInt(count)},
   ];
   document.getElementById("cards").innerHTML = cards.map(c =>
     `<div class="card"><div class="k">${c.k}</div><div class="v ${c.accent ? "accent" : ""}">${c.v}</div></div>`
