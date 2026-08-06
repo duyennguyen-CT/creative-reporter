@@ -128,6 +128,7 @@ const SGD_TO_VND = 20337;  // exchange rate used for the VND columns
 let RAW = null, RANGES = {}, curRange = null;
 let DATA = null, activeIdx = 0, sortKey = "spend", sortDir = -1, viewMode = "creative";
 let showCampaign = false;  // Campaign column is collapsed by default (toggle to show)
+let campAppTab = "meta";   // Campaign tab: App install sub-tab — "meta" (FB) | "google" (GG)
 let AB = null;  // Airbridge MMP installs snapshot (docs/data/airbridge_installs.json)
 let GG = null;  // Google Ads snapshot (docs/data/google_data.json): sheet cost + Airbridge installs
 let platform = "meta";  // top-level view: "meta" (default) | "google"
@@ -486,6 +487,7 @@ function selectTab(i) { activeIdx = i; sortKey = "spend"; sortDir = -1; renderTa
 function sortBy(k) { if (sortKey === k) sortDir *= -1; else { sortKey = k; sortDir = -1; } renderPanel(); }
 function setView(m) { viewMode = m; sortKey = "spend"; sortDir = -1; renderControls(); renderPanel(); }
 function toggleCampaign() { showCampaign = !showCampaign; renderControls(); renderPanel(); }
+function setCampAppTab(t) { campAppTab = t; sortKey = "spend"; sortDir = -1; renderPanel(); }
 
 const COLS = [
   {k: "name", label: "Creative"},
@@ -637,20 +639,39 @@ function renderPanel() {
   }
 
   if (tab.kind === "campaign") {
-    // Campaign report: one shared-theme campaign split by the team running it.
+    // Campaign report: one shared-theme campaign. Brand awareness stands on its
+    // own; the app-install part is FB (Meta) + GG (Google) behind a sub-tab
+    // switch so they're compact instead of stacked full-height.
     const note = `<div class="camp-note">📌 <b>${tab.title}</b> — chiến dịch sync từ awareness → app install (dùng chung asset/theme). App install tách FB (Meta) vs GG (Google):</div>`;
-    const secs = tab.sections.map(s => {
-      const isGG = s.platform === "google";
-      const unit = isGG ? "ad groups" : "creatives";
-      const head = `<div class="sec-head"><b>${s.label}</b><span>${s.creatives.length} ${unit}</span></div>`;
-      const body = s.creatives.length
-        ? (isGG
-            ? googleAccountPanelHTML({label: s.label, creatives: s.creatives})
-            : accountPanelHTML({label: s.label, group: s.group, creatives: s.creatives}))
-        : `<div class="panel"><div class="empty">Không có ${isGG ? "campaign Google" : "creative"} nào khớp trong khoảng thời gian này.</div></div>`;
-      return `<div class="camp-sec">${head}${body}</div>`;
-    }).join("");
-    panel.innerHTML = note + secs;
+
+    const brand = tab.sections.find(s => s.group === "BRAND");
+    const fb = tab.sections.find(s => s.platform === "meta" && s.group === "GROWTH");
+    const gg = tab.sections.find(s => s.platform === "google");
+
+    // A section's detail body (Meta creatives vs Google ad groups), or an empty note.
+    const bodyOf = s => {
+      if (!s || !s.creatives.length)
+        return `<div class="panel"><div class="empty">Không có ${s && s.platform === "google" ? "campaign Google" : "creative"} nào khớp trong khoảng thời gian này.</div></div>`;
+      return s.platform === "google"
+        ? googleAccountPanelHTML({label: s.label, creatives: s.creatives})
+        : accountPanelHTML({label: s.label, group: s.group, creatives: s.creatives});
+    };
+
+    const brandBlock = brand
+      ? `<div class="camp-sec"><div class="sec-head"><b>Brand — Awareness</b><span>${brand.creatives.length} creatives</span></div>${bodyOf(brand)}</div>`
+      : "";
+
+    // App install with FB / GG sub-tabs.
+    const active = campAppTab === "google" ? gg : fb;
+    const subtabs = `<div class="sec-head" style="justify-content:space-between">`
+      + `<b>App install</b>`
+      + `<div style="display:flex;gap:8px">`
+      + `<button class="ctl${campAppTab === "meta" ? " active" : ""}" onclick="setCampAppTab('meta')">FB · ${fb ? fb.creatives.length : 0}</button>`
+      + `<button class="ctl${campAppTab === "google" ? " active" : ""}" onclick="setCampAppTab('google')">GG · ${gg ? gg.creatives.length : 0}</button>`
+      + `</div></div>`;
+    const appBlock = `<div class="camp-sec">${subtabs}${bodyOf(active)}</div>`;
+
+    panel.innerHTML = note + brandBlock + appBlock;
     return;
   }
 
