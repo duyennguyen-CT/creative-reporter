@@ -665,19 +665,17 @@ const GCOLS = [
   {k: "name", label: "Ad group"},
   {k: "spend", label: "Spend (₫)", f: fmtVnd},
   {k: "installs", label: "Installs", f: fmtDash(fmtInt)},
-  {k: "cpi", label: "CPI (₫)", f: fmtDash(fmtVnd)},
+  {k: "cpi", label: "CPI (₫)", f: fmtDash(fmtVnd), d: "cpi_d", goodDown: true},
   {k: "impressions", label: "Impr.", f: fmtInt},
   {k: "clicks", label: "Clicks", f: fmtInt},
-  {k: "ctr", label: "CTR", f: fmtPct},
+  {k: "ctr", label: "CTR", f: fmtPct, d: "ctr_d", goodDown: false},
   {k: "cpc", label: "CPC (₫)", f: fmtDash(fmtVnd)},
   {k: "cpm", label: "CPM (₫)", f: fmtDash(fmtVnd)},
 ];
 
-// Sum google_data.by_day over the window for `key`, grouped by account.
-// Returns Map<account, ad-group-row[]>.
-function ggWindow(key) {
-  const {since, until} = abWindow(key);
-  const agg = new Map();  // cid_agid -> [cost, impr, clicks, installs]
+// Sum google_data.by_day over [since, until] -> Map<cid_agid, [cost,impr,clk,ins]>.
+function ggAgg(since, until) {
+  const agg = new Map();
   for (const day in GG.by_day) {
     if (day < since || day > until) continue;
     const m = GG.by_day[day];
@@ -687,18 +685,29 @@ function ggWindow(key) {
       agg.set(k, t);
     }
   }
+  return agg;
+}
+
+// Build per-account ad-group rows for `key`, with ctr_d/cpi_d deltas vs the
+// immediately-preceding equal-length window (same abWindow/abPrevWindow logic
+// as the Meta side). Returns Map<account, ad-group-row[]>.
+function ggWindow(key) {
+  const cur = abWindow(key), prev = abPrevWindow(key);
+  const agg = ggAgg(cur.since, cur.until);
+  const pagg = prev ? ggAgg(prev.since, prev.until) : null;
   const byAcct = new Map();
   agg.forEach((v, k) => {
     const d = GG.dims[k]; if (!d) return;
     const [cost, impr, clk, ins] = v;
     if (!(cost || impr || clk || ins)) return;
+    const ctr = impr ? clk / impr * 100 : 0, cpi = ins ? cost / ins : 0;
+    const p = pagg ? pagg.get(k) : null;
+    const dd = deltas(ctr, cpi, p ? p[1] : 0, p ? p[2] : 0, p ? p[0] : 0, p ? p[3] : 0);
     const row = {
       name: d.ag || "—", campaign: d.camp || "—", ads: 1,
       spend: cost, impressions: impr, clicks: clk, installs: ins,
-      ctr: impr ? clk / impr * 100 : 0,
-      cpc: clk ? cost / clk : 0,
-      cpm: impr ? cost / impr * 1000 : 0,
-      cpi: ins ? cost / ins : 0,
+      ctr, cpc: clk ? cost / clk : 0, cpm: impr ? cost / impr * 1000 : 0, cpi,
+      ...dd,
     };
     if (!byAcct.has(d.acct)) byAcct.set(d.acct, []);
     byAcct.get(d.acct).push(row);
