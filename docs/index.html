@@ -114,8 +114,6 @@
     <button class="ctl" id="btn-creative">By creative</button>
     <button class="ctl" id="btn-format">By format</button>
     <button class="ctl" id="btn-perad">Per ad</button>
-    <span style="flex:1"></span>
-    <button class="ctl" id="btn-campaign">+ Campaign</button>
   </div>
   <div id="panel"></div>
 
@@ -510,16 +508,14 @@ const COLS = [
 ];
 
 function renderControls() {
-  // The By creative / By format / Per ad / +Campaign controls are Meta-specific
-  // (Google is already at campaign -> ad group level with a Campaign column).
+  // The By creative / By format / Per ad controls are Meta-specific (Google is
+  // already at campaign -> ad group level with a Campaign column). The campaign-
+  // name toggle lives in each table's header (rendered in accountPanelHTML).
   document.querySelector(".controls").style.display = platform === "google" ? "none" : "";
   if (platform === "google") return;
   document.getElementById("btn-creative").className = "ctl" + (viewMode === "creative" ? " active" : "");
   document.getElementById("btn-format").className = "ctl" + (viewMode === "format" ? " active" : "");
   document.getElementById("btn-perad").className = "ctl" + (viewMode === "ad" ? " active" : "");
-  const bc = document.getElementById("btn-campaign");
-  bc.className = "ctl" + (showCampaign ? " active" : "");
-  bc.textContent = showCampaign ? "✕ Campaign" : "+ Campaign";
 }
 
 // GROWTH accounts run app installs -> lead with Spend, Installs, CPI and drop
@@ -611,6 +607,11 @@ function accountPanelHTML(acc) {
   // (The standalone "Breakdown by format" summary was removed — it duplicated
   // the dedicated "By format" view, so it's redundant in the creative/ad views.)
 
+  // Campaign-name column toggle, right by the table (only useful in the
+  // creative/ad views — the format view has no per-creative campaign).
+  const campToggle = byFormat ? "" :
+    `<button class="ctl${showCampaign ? " active" : ""}" style="margin-left:auto" onclick="toggleCampaign()">${showCampaign ? "✕ Campaign name" : "+ Campaign name"}</button>`;
+
   return accountInsightsHTML(acc) + `
     <div class="panel">
       <div class="panel-head">
@@ -621,6 +622,7 @@ function accountPanelHTML(acc) {
         <span>CTR ${fmtPct(t.ctr)}</span>
         ${t.installs ? `<span>Installs ${fmtInt(t.installs)}</span>` : ""}
         <span>${rows.length} ${unit}</span>
+        ${campToggle}
       </div>
       ${tableHTML(rows, cols, true, goodNames)}
     </div>`;
@@ -1005,7 +1007,8 @@ Promise.all([
     document.getElementById("btn-creative").onclick = () => setView("creative");
     document.getElementById("btn-format").onclick = () => setView("format");
     document.getElementById("btn-perad").onclick = () => setView("ad");
-    document.getElementById("btn-campaign").onclick = toggleCampaign;
+    // (The campaign-name toggle is rendered inside each table header with an
+    // inline onclick=toggleCampaign(), so no wiring is needed here.)
 
     // Top-level Meta / Google switch. Hide the Google button if no snapshot.
     document.getElementById("pf-meta").onclick = () => switchPlatform("meta");
