@@ -661,7 +661,8 @@ function renderPanel() {
 // awareness -> app install. Each is split into the Brand-run creatives and the
 // Growth-team app-install creatives. Growth installs live in the pty_app account
 // and share the theme keyword; Brand creatives live in the BRAND-group accounts.
-const GROWTH_APP_ACCT = "Chotot_pty_app";
+const GROWTH_APP_ACCT = "Chotot_pty_app";   // Meta (FB) app-install account
+const GG_APP_ACCT = "Chotot_app_pty";       // Google app-install account
 // Each themed campaign matches by keyword across three sources: Meta Brand
 // creatives (brandKw), Meta Growth app-install creatives (growthKw, in the
 // pty_app account), and Google app-install campaigns (ggKw, matched on the GG
@@ -677,10 +678,10 @@ function buildCampaignTabs(accounts) {
   accounts.forEach(a => a.creatives.forEach(c =>
     flat.push({...c, _acct: a.label, _group: (a.group || "").toUpperCase()})));
   const has = (c, kw) => (c.campaign || "").toLowerCase().includes(kw.toLowerCase());
-  // Flatten Google ad-group rows for the current window (VND-native), each tagged
-  // with its campaign name so we can match the theme keyword.
+  // Google ad-group rows for the current window (VND-native), restricted to the
+  // GG app-install account, tagged with campaign name for the theme keyword match.
   const ggFlat = [];
-  if (GG) ggWindow(curRange).forEach(rows => rows.forEach(r => ggFlat.push(r)));
+  if (GG) ((ggWindow(curRange).get(GG_APP_ACCT)) || []).forEach(r => ggFlat.push(r));
   const ggHas = (r, kw) => (r.campaign || "").toLowerCase().includes(kw.toLowerCase());
   return CAMPAIGN_DEFS.map(def => ({
     kind: "campaign",
