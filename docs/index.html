@@ -77,6 +77,10 @@
   .f-amber { background: #fef3c7; color: var(--amber); }
   .f-red { background: #fee2e2; color: var(--red); }
   .delta { font-size: 10px; font-weight: 700; margin-left: 5px; white-space: nowrap; }
+  /* Comparison columns: value right-aligns to a fixed edge, delta sits in a
+     reserved slot to its right (outside) so every main value lines up. */
+  td.cmp .cdelta { display: inline-block; width: 48px; text-align: left; }
+  th.cmp { padding-right: 62px; }
   .d-good { color: var(--green); }
   .d-bad { color: var(--red); }
   .d-flat { color: var(--muted); }
@@ -545,7 +549,7 @@ function formatColsFor(acc) {
 // Build one <table>. When sortable, headers wire to sortBy and highlight sortKey.
 function tableHTML(rows, cols, sortable, goodNames) {
   const head = cols.map(c =>
-    `<th class="${sortable && c.k === sortKey ? "sorted" : ""}"${sortable ? ` onclick="sortBy('${c.k}')"` : ""}>${c.label}</th>`
+    `<th class="${sortable && c.k === sortKey ? "sorted" : ""}${c.d ? " cmp" : ""}"${sortable ? ` onclick="sortBy('${c.k}')"` : ""}>${c.label}</th>`
   ).join("");
   const body = rows.map(r => "<tr>" + cols.map(c => {
     if (c.k === "name") {
@@ -562,8 +566,11 @@ function tableHTML(rows, cols, sortable, goodNames) {
       return `<td class="campaign" title="${cp}">${cp}</td>`;
     }
     const val = c.f ? c.f(r[c.k]) : r[c.k];
-    const badge = c.d ? deltaBadge(r[c.d], c.goodDown) : "";
-    return `<td>${val}${badge}</td>`;
+    if (c.d) {
+      const badge = deltaBadge(r[c.d], c.goodDown);
+      return `<td class="cmp">${val}<span class="cdelta">${badge}</span></td>`;
+    }
+    return `<td>${val}</td>`;
   }).join("") + "</tr>").join("");
   return `<div style="overflow-x:auto"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
 }
