@@ -3,8 +3,15 @@ Print the BigQuery SQL that pulls Airbridge app-install counts per day per ad,
 scoped to the ad_ids currently on the dashboard (read from docs/data/latest.json).
 
 Usage:
-    python airbridge_query.py [DAYS]     # DAYS defaults to 3 (daily refresh)
+    python airbridge_query.py [DAYS]     # DAYS defaults to 14 (daily refresh)
     python airbridge_query.py 65         # full backfill window
+
+WHY 14 DAYS (not 3): each refresh OVERWRITES the days it pulls and keeps the
+rest, so a wide window self-heals gaps. The old 3-day window meant any day the
+refresh didn't run was lost forever, and newly-launched ads (which only enter
+latest.json on the weekly spend rebuild) had their early install days scroll
+out of the window before they were ever captured -> permanently blank installs.
+A 14-day window comfortably covers the weekly latest.json cadence.
 
 Then, in a Claude session with the BQ MCP, run the printed SQL against project
 chotot-dwh. It returns ONE row: a JSON string `by_day`. Save that result and
@@ -55,5 +62,5 @@ FROM per_day"""
 
 
 if __name__ == "__main__":
-    days = int(sys.argv[1]) if len(sys.argv) > 1 else 3
+    days = int(sys.argv[1]) if len(sys.argv) > 1 else 14
     print(build_sql(days))
