@@ -42,14 +42,20 @@ def dashboard_ad_ids():
 
 
 def build_sql(days):
-    ids = dashboard_ad_ids()
-    in_list = ",".join(ids)
+    # NO ad_id gate: pull EVERY facebook.business ad's installs. The old
+    # `Ad_Creative_ID IN (dashboard ids)` gate silently dropped installs for any
+    # ad not yet in latest.json — i.e. every ad launched since the last weekly
+    # spend rebuild — so freshly-launched ads showed blank installs until (and
+    # unless) their install days were still inside the window on a later run.
+    # Pulling ungated means whatever ad_ids the dashboard has (now or after the
+    # next spend refresh) will always find their installs. Extra ad_ids in the
+    # snapshot are harmless: the dashboard only reads its own ids.
     return f"""WITH daily AS (
   SELECT Event_Date AS d, CAST(Ad_Creative_ID AS STRING) AS a, COUNT(*) AS c
   FROM `chotot-dwh.chotot_airbridge.airbridge_raw_data_app_install`
   WHERE Channel='facebook.business'
     AND Event_Date BETWEEN DATE_SUB(CURRENT_DATE(), INTERVAL {days} DAY) AND CURRENT_DATE()
-    AND Ad_Creative_ID IN ({in_list})
+    AND Ad_Creative_ID IS NOT NULL
   GROUP BY d, a
 ),
 per_day AS (
