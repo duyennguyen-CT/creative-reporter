@@ -1182,8 +1182,12 @@ function funnelWindow(key, vertical) {
     const spend = sumKnown(rs, "spend_vnd"), impressions = sumKnown(rs, "impressions"), clicks = sumKnown(rs, "clicks");
     const mature = rs.filter(r => r.is_mature_cohort);
     const dwl = sumKnown(mature, "dwl_14d"), lead = sumKnown(mature, "lead_14d");
+    // "All cohorts" DWL/lead include recent, not-yet-mature cohorts (undercounts
+    // eventual conversions, since a 14-day window hasn't closed yet) -- shown
+    // alongside the mature figures so recent windows aren't all blank dashes.
+    const dwlAll = sumKnown(rs, "dwl_14d"), leadAll = sumKnown(rs, "lead_14d");
     return {vertical, platform, campaign, name, match_status, spend, impressions, clicks,
-      dau: sumKnown(rs, "dau"), dwa: sumKnown(rs, "dwa"), dwl, lead,
+      dau: sumKnown(rs, "dau"), dwa: sumKnown(rs, "dwa"), dwl, lead, dwlAll, leadAll,
       ctr: impressions ? clicks / impressions * 100 : null,
       cpdwl: spend && dwl ? spend / dwl : null};
   });
@@ -1192,7 +1196,8 @@ function funnelWindow(key, vertical) {
 function funnelTotals(rows) {
   const spend = sumKnown(rows, "spend"), impressions = sumKnown(rows, "impressions"), clicks = sumKnown(rows, "clicks");
   const dwl = sumKnown(rows, "dwl"), lead = sumKnown(rows, "lead");
-  return {spend, impressions, clicks, dwl, lead, dau: sumKnown(rows, "dau"), dwa: sumKnown(rows, "dwa"),
+  const dwlAll = sumKnown(rows, "dwlAll"), leadAll = sumKnown(rows, "leadAll");
+  return {spend, impressions, clicks, dwl, lead, dwlAll, leadAll, dau: sumKnown(rows, "dau"), dwa: sumKnown(rows, "dwa"),
     ctr: impressions ? clicks / impressions * 100 : null, cpdwl: spend && dwl ? spend / dwl : null};
 }
 
@@ -1205,6 +1210,8 @@ function renderFunnelCards() {
     {k: "CTR", v: fmtDash(fmtPct)(t.ctr)},
     {k: "DAU", v: fmtDash(fmtInt)(t.dau)},
     {k: "DWA", v: fmtDash(fmtInt)(t.dwa)},
+    {k: "DWL", v: fmtDash(fmtInt)(t.dwlAll)},
+    {k: "Lead", v: fmtDash(fmtInt)(t.leadAll)},
     {k: "DWL · mature 14d", v: fmtDash(fmtInt)(t.dwl)},
     {k: "CP-DWL · mature", v: fmtDash(fmtVnd)(t.cpdwl)},
   ];
