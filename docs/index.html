@@ -1144,7 +1144,8 @@ function funnelWindow(key, vertical) {
   // Placeholder attribution buckets are retained in the source JSON for QA,
   // but are not useful in the creative comparison table.
   FNL.rows.filter(r => r.date >= w.since && r.date <= w.until && (vertical === "ALL" || r.vertical === vertical)
-    && !["APP_NOT_CAPTURABLE", "UNMATCHED_NO_UTM_CONTENT"].includes(r.utm_content)).forEach(r => {
+    && !["APP_NOT_CAPTURABLE", "UNMATCHED_NO_UTM_CONTENT"].includes(r.utm_content)
+    && Number(r.spend_vnd || 0) > 0).forEach(r => {
     const k = [r.vertical, r.utm_campaign, r.utm_content, r.match_status].join("|");
     const a = groups.get(k) || [];
     a.push(r); groups.set(k, a);
@@ -1187,7 +1188,7 @@ function funnelPanelHTML(tab) {
   const rows = funnelWindow(curRange, tab.vertical).sort((a, b) => (b.spend || 0) - (a.spend || 0));
   const t = funnelTotals(rows);
   if (!rows.length) return `<div class="panel"><div class="empty">No Google Creative Funnel data is loaded for this period yet.</div></div>`;
-  return `<div class="camp-note">📌 Google PMax asset-group cost is joined to tagged web funnel cohorts. “Mature 14d” excludes recent cohorts that have not had a full 14-day lead window. Unmatched platform-cost rows remain visible for reconciliation; unattributed app/missing-UTM rows are excluded from this creative view.</div>
+  return `<div class="camp-note">📌 Showing asset groups with positive spend only. “Mature 14d” excludes recent cohorts that have not had a full 14-day lead window. Source data retains unattributed and zero-spend rows for QA.</div>
     <div class="panel"><div class="panel-head"><b>${tab.label}</b><span>Spend ${fmtDash(fmtVnd)(t.spend)}</span><span>DAU ${fmtDash(fmtInt)(t.dau)}</span><span>DWL ${fmtDash(fmtInt)(t.dwl)}</span><span>${rows.length} rows</span></div>${tableHTML(rows, FCOLS, true)}</div>`;
 }
 
