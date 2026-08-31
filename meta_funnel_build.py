@@ -9,9 +9,14 @@ first. This script only does the merge.
 Inputs:
   1. Bottom-funnel CSV: run tools/queries/shared/meta-content-creative-funnel.sql
      (in chotot-digital) and export to CSV. Columns: date, vertical, utm_campaign,
-     utm_content, dau, dwa, dwl_14d, lead_14d, is_mature_cohort, coverage_pct.
-  2. Top-funnel cost CSV: date, vertical, utm_content, impressions, clicks, spend_sgd
-     — one row per (date, vertical, ad name), summed across ad IDs sharing a name.
+     utm_content, dau, dwa, dwl_14d, lead_14d, is_mature_cohort, coverage_pct. Its
+     utm_campaign (from the warehouse's own click-path extraction) is preferred
+     whenever a row has a funnel match.
+  2. Top-funnel cost CSV: date, vertical, utm_content, impressions, clicks, spend_sgd,
+     platform_campaign — one row per (date, vertical, ad name), summed across ad IDs
+     sharing a name; platform_campaign is Meta's own campaign name(s) for that ad
+     (semicolon-joined if an ad name spans more than one campaign), used as the
+     campaign column's fallback when there's no funnel-side match to pull it from.
      As of 2026-08-31 this covers Chotot_pty_sgd / Chotot_job_sgd / Chotot_gds_elt_sgd
      only (via Ads MCP) — Chotot_veh_sgd and Chotot_gds_c2c_sgd are not yet queryable
      through that tool. VEH rows below will show funnel numbers with no matched cost
@@ -51,10 +56,13 @@ def load_cost(path):
     with open(path, encoding="utf-8-sig", newline="") as f:
         for row in csv.DictReader(f):
             key = (row["date"], row["vertical"], norm(row["utm_content"]))
-            c = cost.setdefault(key, {"impressions": 0, "clicks": 0, "spend_vnd": 0.0})
+            c = cost.setdefault(key, {"impressions": 0, "clicks": 0, "spend_vnd": 0.0, "platform_campaign": None})
             c["impressions"] += int(row["impressions"])
             c["clicks"] += int(row["clicks"])
             c["spend_vnd"] += float(row["spend_sgd"]) * SGD_TO_VND
+            pc = row.get("platform_campaign") or None
+            if pc:
+                c["platform_campaign"] = pc if not c["platform_campaign"] else "; ".join(sorted(set(c["platform_campaign"].split("; ") + pc.split("; "))))
     return cost
 
 
@@ -76,6 +84,8 @@ def merge(cost, funnel):
         if frows:
             campaigns = sorted({r["utm_campaign"] for r in frows if r["utm_campaign"]})
             utm_campaign = campaigns[0] if len(campaigns) == 1 else ("; ".join(campaigns) if campaigns else None)
+            if not utm_campaign and c:
+                utm_campaign = c["platform_campaign"]
             dau = sum(num(r["dau"]) or 0 for r in frows) or None
             dwa = sum(num(r["dwa"]) or 0 for r in frows) if any(r["dwa"] not in ("", "None") for r in frows) else None
             dwl_vals = [num(r["dwl_14d"]) for r in frows if r["dwl_14d"] not in ("", "None")]
@@ -86,7 +96,8 @@ def merge(cost, funnel):
             cov_vals = [num(r["coverage_pct"]) for r in frows if r["coverage_pct"] not in ("", "None")]
             coverage_pct = sum(cov_vals) / len(cov_vals) if cov_vals else None
         else:
-            utm_campaign = dau = dwa = dwl_14d = lead_14d = coverage_pct = None
+            utm_campaign = c["platform_campaign"] if c else None
+            dau = dwa = dwl_14d = lead_14d = coverage_pct = None
             is_mature = False
 
         if c and frows:

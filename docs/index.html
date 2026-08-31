@@ -113,8 +113,14 @@
 
   <div class="cards" id="cards"></div>
   <div class="insights" id="insights" style="display:none"></div>
+  <div class="controls" id="fnl-channel" style="display:none">
+    <span class="ctl-label">Channel:</span>
+    <button class="ctl" id="btn-fnl-all">All</button>
+    <button class="ctl" id="btn-fnl-google">Google</button>
+    <button class="ctl" id="btn-fnl-meta">Meta</button>
+  </div>
   <div class="tabs" id="tabs"></div>
-  <div class="controls">
+  <div class="controls" id="view-controls">
     <span class="ctl-label">View:</span>
     <button class="ctl" id="btn-creative">By creative</button>
     <button class="ctl" id="btn-format">By format</button>
@@ -137,6 +143,7 @@ let AB = null;  // Airbridge MMP installs snapshot (docs/data/airbridge_installs
 let GG = null;  // Google Ads snapshot (docs/data/google_data.json): sheet cost + Airbridge installs
 let DEM = null; // Demand snapshot (docs/data/demand_data.json): raw_retention campaign-level lead/DAU (FB+GG)
 let FNL = null; // Google PMax + Meta ad cost joined to warehouse funnel metrics (merged from two source files)
+let fnlChannel = "ALL"; // "ALL" | "GOOGLE" | "META" — channel filter for the funnel view only
 let platform = "meta";  // top-level view: "meta" (default) | "google" | "funnel" | "campaign"
 
 // --- Airbridge install override -----------------------------------------
@@ -517,14 +524,29 @@ const COLS = [
 ];
 
 function renderControls() {
+  renderFnlChannel();
   // The By creative / By format / Per ad controls are Meta-specific (Google is
   // already at campaign -> ad group level with a Campaign column). The campaign-
   // name toggle lives in each table's header (rendered in accountPanelHTML).
-  document.querySelector(".controls").style.display = (platform === "google" || platform === "funnel") ? "none" : "";
+  document.getElementById("view-controls").style.display = (platform === "google" || platform === "funnel") ? "none" : "";
   if (platform === "google" || platform === "funnel") return;
   document.getElementById("btn-creative").className = "ctl" + (viewMode === "creative" ? " active" : "");
   document.getElementById("btn-format").className = "ctl" + (viewMode === "format" ? " active" : "");
   document.getElementById("btn-perad").className = "ctl" + (viewMode === "ad" ? " active" : "");
+}
+
+function setFnlChannel(ch) {
+  fnlChannel = ch;
+  const verticals = ["ALL", "PTY", "JOB", "VEH", "GDS"].filter(v => v === "ALL" || (FNL && FNL.rows || []).some(r => r.vertical === v));
+  activeIdx = Math.min(Math.max(activeIdx, 0), verticals.length - 1);
+  renderFnlChannel(); renderFunnelCards(); renderTabs(); renderControls(); renderPanel();
+}
+
+function renderFnlChannel() {
+  document.getElementById("fnl-channel").style.display = platform === "funnel" ? "" : "none";
+  document.getElementById("btn-fnl-all").className = "ctl" + (fnlChannel === "ALL" ? " active" : "");
+  document.getElementById("btn-fnl-google").className = "ctl" + (fnlChannel === "GOOGLE" ? " active" : "");
+  document.getElementById("btn-fnl-meta").className = "ctl" + (fnlChannel === "META" ? " active" : "");
 }
 
 // GROWTH accounts run app installs -> lead with Spend, Installs, CPI and drop
@@ -1148,6 +1170,7 @@ function funnelWindow(key, vertical) {
   // Placeholder attribution buckets are retained in the source JSON for QA,
   // but are not useful in the creative comparison table.
   FNL.rows.filter(r => r.date >= w.since && r.date <= w.until && (vertical === "ALL" || r.vertical === vertical)
+    && (fnlChannel === "ALL" || r.ad_platform === fnlChannel)
     && !["APP_NOT_CAPTURABLE", "UNMATCHED_NO_UTM_CONTENT"].includes(r.utm_content)
     && Number(r.spend_vnd || 0) > 0).forEach(r => {
     const k = [r.vertical, r.ad_platform, r.utm_campaign, r.utm_content, r.match_status].join("|");
@@ -1222,7 +1245,7 @@ function applyRangeGoogle(key) {
 function switchPlatform(p) {
   if (p === platform || (p === "google" && !GG) || (p === "funnel" && !FNL)) return;
   platform = p;
-  activeIdx = 0; sortKey = "spend"; sortDir = -1; viewMode = "creative"; showCampaign = false;
+  activeIdx = 0; sortKey = "spend"; sortDir = -1; viewMode = "creative"; showCampaign = false; fnlChannel = "ALL";
   document.getElementById("pf-meta").className = "pf" + (p === "meta" ? " active" : "");
   document.getElementById("pf-google").className = "pf" + (p === "google" ? " active" : "");
   document.getElementById("pf-funnel").className = "pf" + (p === "funnel" ? " active" : "");
@@ -1344,6 +1367,9 @@ Promise.all([
     document.getElementById("pf-google").onclick = () => switchPlatform("google");
     document.getElementById("pf-funnel").onclick = () => switchPlatform("funnel");
     document.getElementById("pf-campaign").onclick = () => switchPlatform("campaign");
+    document.getElementById("btn-fnl-all").onclick = () => setFnlChannel("ALL");
+    document.getElementById("btn-fnl-google").onclick = () => setFnlChannel("GOOGLE");
+    document.getElementById("btn-fnl-meta").onclick = () => setFnlChannel("META");
     if (!GG) document.getElementById("pf-google").style.display = "none";
     if (!FNL) document.getElementById("pf-funnel").style.display = "none";
 
