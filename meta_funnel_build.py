@@ -4,7 +4,14 @@ Unlike google_funnel_build.py, this has no single scheduled BigQuery source yet:
 Meta ad-cost data isn't reachable from BigQuery (chotot_marketing.meta_ads_ad is
 access-blocked for Kiet's account as of 2026-08-31), so top-funnel cost has to be
 pulled per account from the Meta Marketing API / Ads MCP tool and exported to a CSV
-first. This script only does the merge.
+first. This script does the merge, plus one important resolution step: some Meta
+ads tag their landing URL's utm_content with the ad's own display NAME (e.g.
+"awo_catalog_worker"), others tag it with the ad's numeric ID (e.g.
+"120242745306470186" — confirmed 2026-08-31 on `digital_fb_job_nvkd`, which looked
+like a 0-DAU campaign under name-only matching but actually had real DAU once
+matched by ad ID). There's no way to know in advance which an ad uses, so for each
+ad this script checks both against the bottom-funnel's actual utm_content values
+and uses whichever one is present, per vertical.
 
 Inputs:
   1. Bottom-funnel CSV: run tools/queries/shared/meta-content-creative-funnel.sql
@@ -12,18 +19,21 @@ Inputs:
      utm_content, dau, dwa, dwl_14d, lead_14d, is_mature_cohort, coverage_pct. Its
      utm_campaign (from the warehouse's own click-path extraction) is preferred
      whenever a row has a funnel match.
-  2. Top-funnel cost CSV: date, vertical, utm_content, impressions, clicks, spend_sgd,
-     platform_campaign — one row per (date, vertical, ad name), summed across ad IDs
-     sharing a name; platform_campaign is Meta's own campaign name(s) for that ad
-     (semicolon-joined if an ad name spans more than one campaign), used as the
-     campaign column's fallback when there's no funnel-side match to pull it from.
-     As of 2026-08-31 this covers Chotot_pty_sgd / Chotot_job_sgd / Chotot_gds_elt_sgd
-     only (via Ads MCP) — Chotot_veh_sgd and Chotot_gds_c2c_sgd are not yet queryable
-     through that tool. VEH rows below will show funnel numbers with no matched cost
-     until a source for VEH exists.
+  2. Raw ad-entities CSV: one row per (date, ad), fields date, vertical, ad_id,
+     ad_name, campaign_id, impressions, clicks, spend_sgd. Pull via the Ads MCP
+     tool: fields ["name", "impressions", "link_click", "amount_spent",
+     "campaign_id"], level="ad", time_increment="1", filtering amount_spent > 0.
+     As of 2026-08-31 this covers Chotot_pty_sgd / Chotot_job_sgd /
+     Chotot_gds_elt_sgd only — Chotot_veh_sgd and Chotot_gds_c2c_sgd are not yet
+     queryable through that tool. VEH rows below will show funnel numbers with no
+     matched cost until a source for VEH exists.
+  3. Campaign lookup CSV: vertical, campaign_id, campaign_name — pull via the Ads
+     MCP tool at level="campaign", fields=["name"], one call per account, and tag
+     each with its vertical. Used both to resolve campaign_id -> name for the
+     campaign column and as a fallback when there's no funnel-side match.
 
 Usage:
-  python meta_funnel_build.py <bottom_funnel.csv> <top_funnel_cost.csv>
+  python meta_funnel_build.py <bottom_funnel.csv> <raw_ad_entities.csv> <campaign_lookup.csv>
 """
 import csv
 import json
@@ -51,21 +61,6 @@ def num(v):
         return float(v)
 
 
-def load_cost(path):
-    cost = {}
-    with open(path, encoding="utf-8-sig", newline="") as f:
-        for row in csv.DictReader(f):
-            key = (row["date"], row["vertical"], norm(row["utm_content"]))
-            c = cost.setdefault(key, {"impressions": 0, "clicks": 0, "spend_vnd": 0.0, "platform_campaign": None})
-            c["impressions"] += int(row["impressions"])
-            c["clicks"] += int(row["clicks"])
-            c["spend_vnd"] += float(row["spend_sgd"]) * SGD_TO_VND
-            pc = row.get("platform_campaign") or None
-            if pc:
-                c["platform_campaign"] = pc if not c["platform_campaign"] else "; ".join(sorted(set(c["platform_campaign"].split("; ") + pc.split("; "))))
-    return cost
-
-
 def load_funnel(path):
     funnel = {}
     with open(path, encoding="utf-8-sig", newline="") as f:
@@ -73,6 +68,54 @@ def load_funnel(path):
             key = (row["date"], row["vertical"], norm(row["utm_content"]))
             funnel.setdefault(key, []).append(row)
     return funnel
+
+
+def funnel_content_sets(funnel):
+    sets = {}
+    for (_date, vertical, content) in funnel:
+        sets.setdefault(vertical, set()).add(content)
+    return sets
+
+
+def load_campaign_map(path):
+    cmap = {}
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        for row in csv.DictReader(f):
+            cmap[(row["vertical"], row["campaign_id"])] = row["campaign_name"]
+    return cmap
+
+
+def build_cost(raw_ads_path, campaign_map, content_sets):
+    # Decide once per ad (not per day) whether the funnel-side join key is its
+    # id or its name, then aggregate under that resolved key.
+    ad_key_choice = {}
+    with open(raw_ads_path, encoding="utf-8-sig", newline="") as f:
+        rows = list(csv.DictReader(f))
+    for row in rows:
+        vertical, ad_id = row["vertical"], row["ad_id"]
+        if (vertical, ad_id) in ad_key_choice:
+            continue
+        name = norm(row["ad_name"])
+        fset = content_sets.get(vertical, set())
+        if ad_id in fset:
+            ad_key_choice[(vertical, ad_id)] = ad_id
+        elif name in fset:
+            ad_key_choice[(vertical, ad_id)] = name
+        else:
+            ad_key_choice[(vertical, ad_id)] = name  # default; stays unmatched
+
+    cost = {}
+    for row in rows:
+        vertical, ad_id = row["vertical"], row["ad_id"]
+        content_key = ad_key_choice[(vertical, ad_id)]
+        key = (row["date"], vertical, content_key)
+        c = cost.setdefault(key, {"impressions": 0, "clicks": 0, "spend_vnd": 0.0, "platform_campaign": None})
+        c["impressions"] += int(row["impressions"])
+        c["clicks"] += int(row["clicks"])
+        c["spend_vnd"] += float(row["spend_sgd"]) * SGD_TO_VND
+        cname = campaign_map.get((vertical, row["campaign_id"])) or f"[unknown campaign {row['campaign_id']}]"
+        c["platform_campaign"] = cname if not c["platform_campaign"] else "; ".join(sorted(set(c["platform_campaign"].split("; ") + [cname])))
+    return cost
 
 
 def merge(cost, funnel):
@@ -122,10 +165,11 @@ def merge(cost, funnel):
 
 
 def main():
-    if len(sys.argv) != 3:
-        sys.exit("usage: python meta_funnel_build.py <bottom_funnel.csv> <top_funnel_cost.csv>")
+    if len(sys.argv) != 4:
+        sys.exit("usage: python meta_funnel_build.py <bottom_funnel.csv> <raw_ad_entities.csv> <campaign_lookup.csv>")
     funnel = load_funnel(sys.argv[1])
-    cost = load_cost(sys.argv[2])
+    campaign_map = load_campaign_map(sys.argv[3])
+    cost = build_cost(sys.argv[2], campaign_map, funnel_content_sets(funnel))
     rows = merge(cost, funnel)
     data_through = max(r["date"] for r in rows)
     OUT.write_text(json.dumps({"generated_at": data_through, "data_through": data_through, "rows": rows},
