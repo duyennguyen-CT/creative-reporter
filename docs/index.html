@@ -1116,10 +1116,11 @@ function demandPanelHTML(sec) {
 
 // ========================================================================
 // GOOGLE CREATIVE FUNNEL. Data = docs/data/google_funnel_data.json, exported
-// from ct_digital.kiet_utm_content_creative_dashboard_google. This is a
+// from ct_digital.kiet_utm_campaign_content_creative_dashboard_google. This is a
 // Google-only view; Meta is not shown as zero while its source access is pending.
 // ========================================================================
 const FCOLS = [
+  {k: "campaign", label: "UTM campaign"},
   {k: "name", label: "Asset group / utm_content"},
   {k: "spend", label: "Spend (₫)", f: fmtDash(fmtVnd)},
   {k: "impressions", label: "Impr.", f: fmtDash(fmtInt)},
@@ -1141,16 +1142,16 @@ function funnelWindow(key, vertical) {
   if (!FNL || !FNL.rows) return [];
   const w = abWindow(key), groups = new Map();
   FNL.rows.filter(r => r.date >= w.since && r.date <= w.until && (vertical === "ALL" || r.vertical === vertical)).forEach(r => {
-    const k = [r.vertical, r.traffic_surface, r.utm_content, r.match_status].join("|");
+    const k = [r.vertical, r.utm_campaign, r.utm_content, r.match_status].join("|");
     const a = groups.get(k) || [];
     a.push(r); groups.set(k, a);
   });
   return [...groups.entries()].map(([k, rs]) => {
-    const [vertical, traffic_surface, name, match_status] = k.split("|");
+    const [vertical, campaign, name, match_status] = k.split("|");
     const spend = sumKnown(rs, "spend_vnd"), impressions = sumKnown(rs, "impressions"), clicks = sumKnown(rs, "clicks");
     const mature = rs.filter(r => r.is_mature_cohort);
     const dwl = sumKnown(mature, "dwl_14d"), lead = sumKnown(mature, "lead_14d");
-    return {vertical, traffic_surface, name, match_status, spend, impressions, clicks,
+    return {vertical, campaign, name, match_status, spend, impressions, clicks,
       dau: sumKnown(rs, "dau"), dwa: sumKnown(rs, "dwa"), dwl, lead,
       ctr: impressions ? clicks / impressions * 100 : null,
       cpdwl: spend && dwl ? spend / dwl : null};
