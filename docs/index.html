@@ -102,6 +102,7 @@
     <div class="platform-switch" id="platform-switch">
       <button class="pf active" id="pf-meta">📊 Meta</button>
       <button class="pf" id="pf-google">🔍 Google</button>
+      <button class="pf" id="pf-funnel">↘ Google Funnel</button>
       <button class="pf" id="pf-campaign">🎯 Campaign</button>
     </div>
     <div style="text-align:right">
@@ -135,7 +136,8 @@ let campDemandTab = "meta"; // Campaign tab: Demand sub-tab — "meta" (FB) | "g
 let AB = null;  // Airbridge MMP installs snapshot (docs/data/airbridge_installs.json)
 let GG = null;  // Google Ads snapshot (docs/data/google_data.json): sheet cost + Airbridge installs
 let DEM = null; // Demand snapshot (docs/data/demand_data.json): raw_retention campaign-level lead/DAU (FB+GG)
-let platform = "meta";  // top-level view: "meta" (default) | "google"
+let FNL = null; // Google PMax asset-group cost joined to warehouse funnel metrics
+let platform = "meta";  // top-level view: "meta" (default) | "google" | "funnel" | "campaign"
 
 // --- Airbridge install override -----------------------------------------
 // Installs come from the Airbridge MMP (last-click attribution), NOT Meta's
@@ -518,8 +520,8 @@ function renderControls() {
   // The By creative / By format / Per ad controls are Meta-specific (Google is
   // already at campaign -> ad group level with a Campaign column). The campaign-
   // name toggle lives in each table's header (rendered in accountPanelHTML).
-  document.querySelector(".controls").style.display = platform === "google" ? "none" : "";
-  if (platform === "google") return;
+  document.querySelector(".controls").style.display = (platform === "google" || platform === "funnel") ? "none" : "";
+  if (platform === "google" || platform === "funnel") return;
   document.getElementById("btn-creative").className = "ctl" + (viewMode === "creative" ? " active" : "");
   document.getElementById("btn-format").className = "ctl" + (viewMode === "format" ? " active" : "");
   document.getElementById("btn-perad").className = "ctl" + (viewMode === "ad" ? " active" : "");
@@ -665,6 +667,11 @@ function renderPanel() {
     panel.innerHTML = tab.creatives.length
       ? googleAccountPanelHTML(tab)
       : `<div class="panel"><div class="empty">Không có dữ liệu Google cho tài khoản này trong khoảng thời gian đã chọn.</div></div>`;
+    return;
+  }
+
+  if (platform === "funnel") {
+    panel.innerHTML = funnelPanelHTML(tab);
     return;
   }
 
@@ -1107,6 +1114,93 @@ function demandPanelHTML(sec) {
     </div>`;
 }
 
+// ========================================================================
+// GOOGLE CREATIVE FUNNEL. Data = docs/data/google_funnel_data.json, exported
+// from ct_digital.kiet_utm_content_creative_dashboard_google. This is a
+// Google-only view; Meta is not shown as zero while its source access is pending.
+// ========================================================================
+const FCOLS = [
+  {k: "name", label: "Asset group / utm_content"},
+  {k: "traffic_surface", label: "Surface"},
+  {k: "match_status", label: "Join status"},
+  {k: "spend", label: "Spend (₫)", f: fmtDash(fmtVnd)},
+  {k: "impressions", label: "Impr.", f: fmtDash(fmtInt)},
+  {k: "clicks", label: "Clicks", f: fmtDash(fmtInt)},
+  {k: "ctr", label: "CTR", f: fmtDash(fmtPct)},
+  {k: "dau", label: "DAU", f: fmtDash(fmtInt)},
+  {k: "dwa", label: "DWA", f: fmtDash(fmtInt)},
+  {k: "dwl", label: "DWL · mature 14d", f: fmtDash(fmtInt)},
+  {k: "lead", label: "Lead · mature 14d", f: fmtDash(fmtInt)},
+  {k: "cpdwl", label: "CP-DWL (₫)", f: fmtDash(fmtVnd), goodDown: true},
+];
+
+function sumKnown(rows, key) {
+  const values = rows.map(r => r[key]).filter(v => v !== null && v !== undefined && v !== "");
+  return values.length ? values.reduce((s, v) => s + Number(v || 0), 0) : null;
+}
+
+function funnelWindow(key, vertical) {
+  if (!FNL || !FNL.rows) return [];
+  const w = abWindow(key), groups = new Map();
+  FNL.rows.filter(r => r.date >= w.since && r.date <= w.until && (vertical === "ALL" || r.vertical === vertical)).forEach(r => {
+    const k = [r.vertical, r.traffic_surface, r.utm_content, r.match_status].join("|");
+    const a = groups.get(k) || [];
+    a.push(r); groups.set(k, a);
+  });
+  return [...groups.entries()].map(([k, rs]) => {
+    const [vertical, traffic_surface, name, match_status] = k.split("|");
+    const spend = sumKnown(rs, "spend_vnd"), impressions = sumKnown(rs, "impressions"), clicks = sumKnown(rs, "clicks");
+    const mature = rs.filter(r => r.is_mature_cohort);
+    const dwl = sumKnown(mature, "dwl_14d"), lead = sumKnown(mature, "lead_14d");
+    return {vertical, traffic_surface, name, match_status, spend, impressions, clicks,
+      dau: sumKnown(rs, "dau"), dwa: sumKnown(rs, "dwa"), dwl, lead,
+      ctr: impressions ? clicks / impressions * 100 : null,
+      cpdwl: spend && dwl ? spend / dwl : null};
+  });
+}
+
+function funnelTotals(rows) {
+  const spend = sumKnown(rows, "spend"), impressions = sumKnown(rows, "impressions"), clicks = sumKnown(rows, "clicks");
+  const dwl = sumKnown(rows, "dwl"), lead = sumKnown(rows, "lead");
+  return {spend, impressions, clicks, dwl, lead, dau: sumKnown(rows, "dau"), dwa: sumKnown(rows, "dwa"),
+    ctr: impressions ? clicks / impressions * 100 : null, cpdwl: spend && dwl ? spend / dwl : null};
+}
+
+function renderFunnelCards() {
+  const rows = funnelWindow(curRange, "ALL"), t = funnelTotals(rows);
+  const cards = [
+    {k: "Google PMax spend", v: fmtDash(fmtVnd)(t.spend)},
+    {k: "Impressions", v: fmtDash(fmtInt)(t.impressions)},
+    {k: "Clicks", v: fmtDash(fmtInt)(t.clicks)},
+    {k: "CTR", v: fmtDash(fmtPct)(t.ctr)},
+    {k: "DAU", v: fmtDash(fmtInt)(t.dau)},
+    {k: "DWA", v: fmtDash(fmtInt)(t.dwa)},
+    {k: "DWL · mature 14d", v: fmtDash(fmtInt)(t.dwl)},
+    {k: "CP-DWL · mature", v: fmtDash(fmtVnd)(t.cpdwl)},
+  ];
+  document.getElementById("cards").innerHTML = cards.map(c => `<div class="card"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join("");
+}
+
+function funnelPanelHTML(tab) {
+  const rows = funnelWindow(curRange, tab.vertical).sort((a, b) => (b.spend || 0) - (a.spend || 0));
+  const t = funnelTotals(rows);
+  if (!rows.length) return `<div class="panel"><div class="empty">No Google Creative Funnel data is loaded for this period yet.</div></div>`;
+  return `<div class="camp-note">📌 Google PMax asset-group cost is joined to tagged web funnel cohorts. “Mature 14d” excludes recent cohorts that have not had a full 14-day lead window. Unmatched rows are retained to show coverage gaps.</div>
+    <div class="panel"><div class="panel-head"><b>${tab.label}</b><span>Spend ${fmtDash(fmtVnd)(t.spend)}</span><span>DAU ${fmtDash(fmtInt)(t.dau)}</span><span>DWL ${fmtDash(fmtInt)(t.dwl)}</span><span>${rows.length} rows</span></div>${tableHTML(rows, FCOLS, true)}</div>`;
+}
+
+function applyRangeFunnel(key) {
+  curRange = key;
+  const verticals = ["ALL", "PTY", "JOB", "VEH", "GDS"].filter(v => v === "ALL" || (FNL && FNL.rows || []).some(r => r.vertical === v));
+  DATA = {tabs: verticals.map(v => ({kind: "funnel", vertical: v, label: v === "ALL" ? "All verticals" : v, group: "GOOGLE"}))};
+  activeIdx = Math.min(Math.max(activeIdx, 0), DATA.tabs.length - 1);
+  document.getElementById("period").textContent = RANGES[key].period_label || "";
+  document.getElementById("generated").textContent = "Google Funnel data through: " + (FNL.data_through || "—");
+  document.getElementById("foot").textContent = "Google PMax asset-group cost joined to warehouse cohorts · DWL and CP-DWL use mature 14-day cohorts only · Meta is not yet included.";
+  document.getElementById("insights").style.display = "none";
+  renderFunnelCards(); renderTabs(); renderControls(); renderPanel();
+}
+
 function applyRangeGoogle(key) {
   curRange = key;
   const byAcct = ggWindow(key);
@@ -1119,15 +1213,17 @@ function applyRangeGoogle(key) {
 }
 
 function switchPlatform(p) {
-  if (p === platform || (p === "google" && !GG)) return;
+  if (p === platform || (p === "google" && !GG) || (p === "funnel" && !FNL)) return;
   platform = p;
   activeIdx = 0; sortKey = "spend"; sortDir = -1; viewMode = "creative"; showCampaign = false;
   document.getElementById("pf-meta").className = "pf" + (p === "meta" ? " active" : "");
   document.getElementById("pf-google").className = "pf" + (p === "google" ? " active" : "");
+  document.getElementById("pf-funnel").className = "pf" + (p === "funnel" ? " active" : "");
   document.getElementById("pf-campaign").className = "pf" + (p === "campaign" ? " active" : "");
   const titles = {
     meta: "📊 Chotot Meta Ads — Creative Performance",
     google: "🔍 Chotot Google Ads — Campaign / Ad group",
+    funnel: "↘ Chotot Google Ads — Creative Funnel",
     campaign: "🎯 Chotot Campaign Reports — Awareness → Install",
   };
   document.getElementById("title").textContent = titles[p] || titles.meta;
@@ -1136,6 +1232,7 @@ function switchPlatform(p) {
 
 function applyRange(key) {
   if (platform === "google") { applyRangeGoogle(key); return; }
+  if (platform === "funnel") { applyRangeFunnel(key); return; }
   if (platform === "campaign") { applyRangeCampaign(key); return; }
   curRange = key;
   applyAirbridge(key);
@@ -1199,15 +1296,18 @@ Promise.all([
   fetch("./data/airbridge_installs.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
   fetch("./data/google_data.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
   fetch("./data/demand_data.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
+  fetch("./data/google_funnel_data.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
 ])
-  .then(([d, ab, gg, dem]) => {
+  .then(([d, ab, gg, dem, fnl]) => {
     RAW = d;
     AB = ab;
     GG = gg;
     DEM = dem;
+    FNL = fnl;
     if (DEM) console.log("Demand data loaded:", Object.keys(DEM.dims || {}).length, "campaigns,", Object.keys(DEM.by_day || {}).length, "days, through", DEM.data_through);
     if (AB) console.log("Airbridge installs loaded:", AB.date_range, Object.keys(AB.by_day || {}).length, "days");
     if (GG) console.log("Google data loaded:", GG.accounts, Object.keys(GG.by_day || {}).length, "days, through", GG.data_through);
+    if (FNL) console.log("Google funnel data loaded:", (FNL.rows || []).length, "rows, through", FNL.data_through);
     // New schema has `ranges`; fall back to old flat schema for safety.
     RANGES = d.ranges || {all: {label: "", period_label: d.period_label, accounts: d.accounts}};
     const keys = Object.keys(RANGES);
@@ -1229,8 +1329,10 @@ Promise.all([
     // Top-level Meta / Google switch. Hide the Google button if no snapshot.
     document.getElementById("pf-meta").onclick = () => switchPlatform("meta");
     document.getElementById("pf-google").onclick = () => switchPlatform("google");
+    document.getElementById("pf-funnel").onclick = () => switchPlatform("funnel");
     document.getElementById("pf-campaign").onclick = () => switchPlatform("campaign");
     if (!GG) document.getElementById("pf-google").style.display = "none";
+    if (!FNL) document.getElementById("pf-funnel").style.display = "none";
 
     applyRange(curRange);
   })
