@@ -102,7 +102,7 @@
     <div class="platform-switch" id="platform-switch">
       <button class="pf active" id="pf-meta">📊 Meta</button>
       <button class="pf" id="pf-google">🔍 Google</button>
-      <button class="pf" id="pf-funnel">↘ Google Funnel</button>
+      <button class="pf" id="pf-funnel">↘ Google &amp; Meta</button>
       <button class="pf" id="pf-campaign">🎯 Campaign</button>
     </div>
     <div style="text-align:right">
@@ -136,7 +136,7 @@ let campDemandTab = "meta"; // Campaign tab: Demand sub-tab — "meta" (FB) | "g
 let AB = null;  // Airbridge MMP installs snapshot (docs/data/airbridge_installs.json)
 let GG = null;  // Google Ads snapshot (docs/data/google_data.json): sheet cost + Airbridge installs
 let DEM = null; // Demand snapshot (docs/data/demand_data.json): raw_retention campaign-level lead/DAU (FB+GG)
-let FNL = null; // Google PMax asset-group cost joined to warehouse funnel metrics
+let FNL = null; // Google PMax + Meta ad cost joined to warehouse funnel metrics (merged from two source files)
 let platform = "meta";  // top-level view: "meta" (default) | "google" | "funnel" | "campaign"
 
 // --- Airbridge install override -----------------------------------------
@@ -1115,11 +1115,15 @@ function demandPanelHTML(sec) {
 }
 
 // ========================================================================
-// GOOGLE CREATIVE FUNNEL. Data = docs/data/google_funnel_data.json, exported
-// from ct_digital.kiet_utm_campaign_content_creative_dashboard_google. This is a
-// Google-only view; Meta is not shown as zero while its source access is pending.
+// GOOGLE + META CREATIVE FUNNEL. Data = docs/data/google_funnel_data.json (from
+// ct_digital.kiet_utm_campaign_content_creative_dashboard_google, scheduled daily)
+// merged with docs/data/meta_funnel_data.json (Meta ad cost pulled manually via
+// Ads MCP/Marketing API, joined to the same warehouse funnel table — see
+// meta_funnel_build.py). VEH Meta rows show funnel numbers only: no ad-cost
+// source is wired up yet for that account.
 // ========================================================================
 const FCOLS = [
+  {k: "platform", label: "Platform"},
   {k: "campaign", label: "UTM campaign"},
   {k: "name", label: "Asset group / utm_content"},
   {k: "spend", label: "Spend (₫)", f: fmtDash(fmtVnd)},
@@ -1146,16 +1150,16 @@ function funnelWindow(key, vertical) {
   FNL.rows.filter(r => r.date >= w.since && r.date <= w.until && (vertical === "ALL" || r.vertical === vertical)
     && !["APP_NOT_CAPTURABLE", "UNMATCHED_NO_UTM_CONTENT"].includes(r.utm_content)
     && Number(r.spend_vnd || 0) > 0).forEach(r => {
-    const k = [r.vertical, r.utm_campaign, r.utm_content, r.match_status].join("|");
+    const k = [r.vertical, r.ad_platform, r.utm_campaign, r.utm_content, r.match_status].join("|");
     const a = groups.get(k) || [];
     a.push(r); groups.set(k, a);
   });
   return [...groups.entries()].map(([k, rs]) => {
-    const [vertical, campaign, name, match_status] = k.split("|");
+    const [vertical, platform, campaign, name, match_status] = k.split("|");
     const spend = sumKnown(rs, "spend_vnd"), impressions = sumKnown(rs, "impressions"), clicks = sumKnown(rs, "clicks");
     const mature = rs.filter(r => r.is_mature_cohort);
     const dwl = sumKnown(mature, "dwl_14d"), lead = sumKnown(mature, "lead_14d");
-    return {vertical, campaign, name, match_status, spend, impressions, clicks,
+    return {vertical, platform, campaign, name, match_status, spend, impressions, clicks,
       dau: sumKnown(rs, "dau"), dwa: sumKnown(rs, "dwa"), dwl, lead,
       ctr: impressions ? clicks / impressions * 100 : null,
       cpdwl: spend && dwl ? spend / dwl : null};
@@ -1172,7 +1176,7 @@ function funnelTotals(rows) {
 function renderFunnelCards() {
   const rows = funnelWindow(curRange, "ALL"), t = funnelTotals(rows);
   const cards = [
-    {k: "Google PMax spend", v: fmtDash(fmtVnd)(t.spend)},
+    {k: "Total spend", v: fmtDash(fmtVnd)(t.spend)},
     {k: "Impressions", v: fmtDash(fmtInt)(t.impressions)},
     {k: "Clicks", v: fmtDash(fmtInt)(t.clicks)},
     {k: "CTR", v: fmtDash(fmtPct)(t.ctr)},
@@ -1188,18 +1192,18 @@ function funnelPanelHTML(tab) {
   const rows = funnelWindow(curRange, tab.vertical).sort((a, b) => (b.spend || 0) - (a.spend || 0));
   const t = funnelTotals(rows);
   if (!rows.length) return `<div class="panel"><div class="empty">No Google Creative Funnel data is loaded for this period yet.</div></div>`;
-  return `<div class="camp-note">📌 Showing asset groups with positive spend only. “Mature 14d” excludes recent cohorts that have not had a full 14-day lead window. Source data retains unattributed and zero-spend rows for QA.</div>
+  return `<div class="camp-note">📌 Showing Google asset groups + Meta ads with positive spend only. “Mature 14d” excludes recent cohorts that have not had a full 14-day lead window. VEH Meta rows have no cost source yet, so they won't appear here (spend filter) — see the vertical tab for funnel-only rows. Source data retains unattributed and zero-spend rows for QA.</div>
     <div class="panel"><div class="panel-head"><b>${tab.label}</b><span>Spend ${fmtDash(fmtVnd)(t.spend)}</span><span>DAU ${fmtDash(fmtInt)(t.dau)}</span><span>DWL ${fmtDash(fmtInt)(t.dwl)}</span><span>${rows.length} rows</span></div>${tableHTML(rows, FCOLS, true)}</div>`;
 }
 
 function applyRangeFunnel(key) {
   curRange = key;
   const verticals = ["ALL", "PTY", "JOB", "VEH", "GDS"].filter(v => v === "ALL" || (FNL && FNL.rows || []).some(r => r.vertical === v));
-  DATA = {tabs: verticals.map(v => ({kind: "funnel", vertical: v, label: v === "ALL" ? "All verticals" : v, group: "GOOGLE"}))};
+  DATA = {tabs: verticals.map(v => ({kind: "funnel", vertical: v, label: v === "ALL" ? "All verticals" : v, group: ""}))};
   activeIdx = Math.min(Math.max(activeIdx, 0), DATA.tabs.length - 1);
   document.getElementById("period").textContent = RANGES[key].period_label || "";
-  document.getElementById("generated").textContent = "Google Funnel data through: " + (FNL.data_through || "—");
-  document.getElementById("foot").textContent = "Google PMax asset-group cost joined to warehouse cohorts · DWL and CP-DWL use mature 14-day cohorts only · Meta is not yet included.";
+  document.getElementById("generated").textContent = "Funnel data through: " + (FNL.data_through || "—");
+  document.getElementById("foot").textContent = "Google PMax asset-group cost + Meta ad cost, both joined to warehouse cohorts · DWL and CP-DWL use mature 14-day cohorts only · VEH Meta rows show funnel numbers only, no cost source yet.";
   document.getElementById("insights").style.display = "none";
   renderFunnelCards(); renderTabs(); renderControls(); renderPanel();
 }
@@ -1226,7 +1230,7 @@ function switchPlatform(p) {
   const titles = {
     meta: "📊 Chotot Meta Ads — Creative Performance",
     google: "🔍 Chotot Google Ads — Campaign / Ad group",
-    funnel: "↘ Chotot Google Ads — Creative Funnel",
+    funnel: "↘ Chotot Ads — Google & Meta Funnel",
     campaign: "🎯 Chotot Campaign Reports — Awareness → Install",
   };
   document.getElementById("title").textContent = titles[p] || titles.meta;
@@ -1300,17 +1304,23 @@ Promise.all([
   fetch("./data/google_data.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
   fetch("./data/demand_data.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
   fetch("./data/google_funnel_data.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
+  fetch("./data/meta_funnel_data.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
 ])
-  .then(([d, ab, gg, dem, fnl]) => {
+  .then(([d, ab, gg, dem, gfnl, mfnl]) => {
     RAW = d;
     AB = ab;
     GG = gg;
     DEM = dem;
-    FNL = fnl;
+    // Google and Meta funnel rows share one schema (see meta_funnel_build.py);
+    // merge into a single FNL.rows so funnelWindow() treats both uniformly.
+    FNL = (gfnl || mfnl) ? {
+      data_through: [gfnl, mfnl].filter(Boolean).map(x => x.data_through).sort().pop(),
+      rows: [...(gfnl ? gfnl.rows : []), ...(mfnl ? mfnl.rows : [])],
+    } : null;
     if (DEM) console.log("Demand data loaded:", Object.keys(DEM.dims || {}).length, "campaigns,", Object.keys(DEM.by_day || {}).length, "days, through", DEM.data_through);
     if (AB) console.log("Airbridge installs loaded:", AB.date_range, Object.keys(AB.by_day || {}).length, "days");
     if (GG) console.log("Google data loaded:", GG.accounts, Object.keys(GG.by_day || {}).length, "days, through", GG.data_through);
-    if (FNL) console.log("Google funnel data loaded:", (FNL.rows || []).length, "rows, through", FNL.data_through);
+    if (FNL) console.log("Funnel data loaded:", (FNL.rows || []).length, "rows (Google + Meta), through", FNL.data_through);
     // New schema has `ranges`; fall back to old flat schema for safety.
     RANGES = d.ranges || {all: {label: "", period_label: d.period_label, accounts: d.accounts}};
     const keys = Object.keys(RANGES);
