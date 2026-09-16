@@ -90,6 +90,22 @@
   .d-flat { color: var(--muted); }
   .foot { color: var(--muted); font-size: 12px; margin-top: 22px; text-align: center; }
   .err { padding: 40px; text-align: center; color: var(--red); }
+  /* Per-source data-freshness strip: each source carries its own "data through"
+     date, and they are NOT in sync (Meta auto-refreshes weekly; the BigQuery /
+     Sheet sources are pulled by hand). Surfacing every source's own asof date
+     stops anyone reading e.g. Meta 14 Sep against Google 05 Aug as same period. */
+  .freshness { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 4px 0 2px; }
+  .freshness .flabel { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .fchip { display: inline-flex; align-items: baseline; gap: 6px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 11px; font-size: 12px; background: var(--card); }
+  .fchip b { font-weight: 600; }
+  .fchip .fdate { color: var(--muted); }
+  .fchip .fago { font-size: 11px; font-weight: 600; }
+  .fchip.fresh { border-color: var(--green); }
+  .fchip.fresh .fago { color: var(--green); }
+  .fchip.watch { border-color: var(--amber); }
+  .fchip.watch .fago { color: var(--amber); }
+  .fchip.stale { border-color: var(--red); background: #fef2f2; }
+  .fchip.stale .fago { color: var(--red); }
 </style>
 </head>
 <body>
@@ -110,6 +126,8 @@
       <div class="sub" id="generated">…</div>
     </div>
   </header>
+
+  <div class="freshness" id="freshness"></div>
 
   <div class="cards" id="cards"></div>
   <div class="insights" id="insights" style="display:none"></div>
@@ -1330,6 +1348,34 @@ function applyRangeCampaign(key) {
   renderCampaignCards(); renderTabs(); renderControls(); renderPanel();
 }
 
+// Render the per-source freshness strip. Each source keeps its own "data
+// through" date because they refresh on different cadences (Meta = weekly CI;
+// the BigQuery/Sheet sources = manual pulls). Colour by how many days each is
+// behind *today*, so a stale source is obvious before anyone compares it
+// against a fresher one.
+function renderFreshness(metaThrough) {
+  const el = document.getElementById("freshness");
+  if (!el) return;
+  const today = new Date();
+  const asDate = s => { const d = new Date((s || "").slice(0, 10) + "T00:00:00Z"); return isNaN(d) ? null : d; };
+  const daysAgo = s => { const d = asDate(s); if (!d) return null; return Math.floor((today - d) / 86400000); };
+  const cls = n => n == null ? "" : n <= 2 ? "fresh" : n <= 9 ? "watch" : "stale";
+  const ago = n => n == null ? "?" : n <= 0 ? "hôm nay" : n === 1 ? "1 ngày" : n + " ngày";
+  const items = [
+    ["Meta creative", metaThrough],
+    ["Airbridge installs", AB && AB.date_range ? AB.date_range[1] : null],
+    ["Google Ads", GG ? GG.data_through : null],
+    ["Demand", DEM ? DEM.data_through : null],
+    ["Funnel (GG+Meta)", FNL ? FNL.data_through : null],
+  ].filter(x => x[1]);
+  el.innerHTML = `<span class="flabel">Data đến:</span>` + items.map(([name, through]) => {
+    const n = daysAgo(through);
+    const dstr = (through || "").slice(0, 10);
+    return `<span class="fchip ${cls(n)}" title="${name} — data đến ${dstr}, trễ ${ago(n)} so với hôm nay">`
+      + `<b>${name}</b><span class="fdate">${dstr}</span><span class="fago">${ago(n)}</span></span>`;
+  }).join("");
+}
+
 Promise.all([
   fetch("./data/latest.json?v=" + Date.now()).then(r => r.json()),
   fetch("./data/airbridge_installs.json?v=" + Date.now()).then(r => r.ok ? r.json() : null).catch(() => null),
@@ -1363,6 +1409,7 @@ Promise.all([
     sel.onchange = () => applyRange(sel.value);
 
     document.getElementById("generated").textContent = "Updated: " + (d.generated_at || "").replace("T", " ").replace("Z", " UTC");
+    renderFreshness(d.generated_at);
     const abNote = AB ? "  ·  installs from Airbridge MMP (data through " + (AB.date_range ? AB.date_range[1] : "?") + ")" : "";
     document.getElementById("foot").textContent = "Freq badge:  <3× (ok) · 3–7× (watch) · ≥7× (high)  ·  Group by creative: reach is summed (estimate)  ·  VND @ 1 SGD = " + SGD_TO_VND.toLocaleString("en-US") + "  —  performance data from Meta Marketing API" + abNote;
     document.getElementById("btn-creative").onclick = () => setView("creative");
