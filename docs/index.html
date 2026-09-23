@@ -106,6 +106,40 @@
   .fchip.watch .fago { color: var(--amber); }
   .fchip.stale { border-color: var(--red); background: #fef2f2; }
   .fchip.stale .fago { color: var(--red); }
+  /* "So sánh" (Compare) view: a plain-language leaderboard grading each
+     creative Tốt/Khá/Cần chú ý/Kém against the account's own median, so a
+     non-technical reader can tell winners from losers without reading a
+     dense numeric table. */
+  .f-blue { background: #dbeafe; color: #1d4ed8; }
+  .f-grey { background: #eef0f3; color: var(--muted); }
+  .cmp-legend { background: #f8f7ff; border: 1px solid #e6e1fb; border-radius: 12px; padding: 12px 16px; margin-bottom: 14px; font-size: 12.5px; color: var(--muted); line-height: 1.9; }
+  .cmp-legend b { color: var(--ink); }
+  .grade-pill { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; margin-left: 4px; }
+  .cmp-list { display: flex; flex-direction: column; gap: 10px; }
+  .cmp-row { background: var(--card); border: 1px solid var(--line); border-left: 4px solid var(--line); border-radius: 12px; padding: 14px 16px; display: grid; grid-template-columns: 30px 1fr 190px; gap: 14px; align-items: center; }
+  .cmp-row.grade-good { border-left-color: var(--green); }
+  .cmp-row.grade-ok { border-left-color: #2563eb; }
+  .cmp-row.grade-watch { border-left-color: var(--amber); }
+  .cmp-row.grade-poor { border-left-color: var(--red); }
+  .cmp-row.grade-na { border-left-color: var(--line); opacity: .8; }
+  .cmp-rank { font-size: 13px; font-weight: 700; color: var(--muted); text-align: center; }
+  .cmp-name-line { display: flex; align-items: center; gap: 6px; margin-bottom: 7px; flex-wrap: wrap; }
+  .cmp-name-line a { font-weight: 700; color: var(--ink); text-decoration: none; }
+  .cmp-name-line a:hover { color: var(--accent); text-decoration: underline; }
+  .cmp-tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; background: #eef0f3; color: var(--muted); }
+  .cmp-bar-track { position: relative; background: #eef0f3; border-radius: 999px; height: 7px; margin: 7px 0; }
+  .cmp-bar-fill { height: 100%; border-radius: 999px; background: var(--accent); overflow: hidden; }
+  .cmp-med-mark { position: absolute; top: -3px; bottom: -3px; width: 2px; background: var(--ink); opacity: .35; }
+  .cmp-row.grade-good .cmp-bar-fill { background: var(--green); }
+  .cmp-row.grade-ok .cmp-bar-fill { background: #2563eb; }
+  .cmp-row.grade-watch .cmp-bar-fill { background: var(--amber); }
+  .cmp-row.grade-poor .cmp-bar-fill { background: var(--red); }
+  .cmp-row.grade-na .cmp-bar-fill { background: var(--line); }
+  .cmp-verdict { font-size: 12.5px; color: var(--muted); line-height: 1.5; }
+  .cmp-verdict b { color: var(--ink); }
+  .cmp-stats-col { text-align: right; font-size: 12px; color: var(--muted); line-height: 1.8; }
+  .cmp-stats-col b { color: var(--ink); font-size: 13px; }
+  .cmp-empty { padding: 22px; text-align: center; color: var(--muted); font-size: 13px; }
 </style>
 </head>
 <body>
@@ -140,6 +174,7 @@
   <div class="tabs" id="tabs"></div>
   <div class="controls" id="view-controls">
     <span class="ctl-label">View:</span>
+    <button class="ctl" id="btn-compare">🏆 So sánh</button>
     <button class="ctl" id="btn-creative">By creative</button>
     <button class="ctl" id="btn-format">By format</button>
     <button class="ctl" id="btn-perad">Per ad</button>
@@ -153,7 +188,7 @@
 const CUR = "SGD";
 const SGD_TO_VND = 20337;  // exchange rate used for the VND columns
 let RAW = null, RANGES = {}, curRange = null;
-let DATA = null, activeIdx = 0, sortKey = "spend", sortDir = -1, viewMode = "creative";
+let DATA = null, activeIdx = 0, sortKey = "spend", sortDir = -1, viewMode = "compare";
 let showCampaign = false;  // Campaign column is collapsed by default (toggle to show)
 let campAppTab = "meta";   // Campaign tab: App install sub-tab — "meta" (FB) | "google" (GG)
 let campDemandTab = "meta"; // Campaign tab: Demand sub-tab — "meta" (FB) | "google" (GG)
@@ -548,6 +583,7 @@ function renderControls() {
   // name toggle lives in each table's header (rendered in accountPanelHTML).
   document.getElementById("view-controls").style.display = (platform === "google" || platform === "funnel") ? "none" : "";
   if (platform === "google" || platform === "funnel") return;
+  document.getElementById("btn-compare").className = "ctl" + (viewMode === "compare" ? " active" : "");
   document.getElementById("btn-creative").className = "ctl" + (viewMode === "creative" ? " active" : "");
   document.getElementById("btn-format").className = "ctl" + (viewMode === "format" ? " active" : "");
   document.getElementById("btn-perad").className = "ctl" + (viewMode === "ad" ? " active" : "");
@@ -652,10 +688,222 @@ function deltaBadge(pct, goodDown) {
   return ` <span class="delta ${cls}" title="vs previous period">${up ? "▲" : "▼"}${Math.abs(pct).toFixed(0)}%</span>`;
 }
 
+// --- "So sánh" (Compare) view -------------------------------------------
+// A plain-language leaderboard/chart for non-data readers: grade every
+// creative Tốt / Khá / Cần chú ý / Kém against the MEDIAN of its own account
+// (same group of creatives, same date range), on a metric the reader picks
+// (default: CPI for GROWTH accounts / CTR for BRAND, since that's what each
+// is actually bought for — but any account can be re-sliced by Hook/Hold/
+// Frequency too). Relative-to-median (not an absolute external benchmark)
+// because spend/format/vertical mix differs enough account-to-account that
+// no single external bar would be fair.
+const GRADE_ORDER = {good: 0, ok: 1, watch: 2, poor: 3, na: 4};
+const GRADE_LABEL = {good: "Tốt", ok: "Khá", watch: "Cần chú ý", poor: "Kém", na: "Chưa đủ dữ liệu"};
+const GRADE_CLASS = {good: "f-green", ok: "f-blue", watch: "f-amber", poor: "f-red", na: "f-grey"};
+let compareMetric = null; // null = auto (CPI for GROWTH / CTR for BRAND); else an explicit METRICS key
+
+// Metric catalogue for the Compare view. `higherBetter` drives grading
+// direction; `costLike` only changes the verdict wording ("rẻ hơn/đắt hơn"
+// vs "cao hơn/thấp hơn"). `actions` are the plain-language recommendation
+// per grade tier, phrased for the metric's own meaning (cost vs quality vs
+// fatigue) rather than one generic sentence.
+const METRICS = {
+  cpi: {key: "cpi", label: "CPI", unitDesc: "chi phí / lượt cài đặt", higherBetter: false, costLike: true,
+    minOk: r => r.installs >= 5 && r.cpi > 0, minDesc: "tối thiểu 5 lượt cài đặt",
+    val: r => fmtVnd(r.cpi_vnd), med: m => fmtVnd(m * SGD_TO_VND),
+    actions: {good: "hiệu quả, đáng cân nhắc tăng ngân sách.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "cân nhắc tắt hoặc thay creative."}},
+  ctr: {key: "ctr", label: "CTR", unitDesc: "tỷ lệ click", higherBetter: true,
+    minOk: r => r.impressions >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtPct(r.ctr), med: m => fmtPct(m),
+    actions: {good: "content đang hút chú ý, nên nhân bản góc content này.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "nên đổi sang creative/góc content khác."}},
+  // Only Video creatives with a nonzero rate carry a real hook/hold signal —
+  // Image/Carousel/Dynamic ads structurally report 0% (no video_3s/thruplay),
+  // which would otherwise misread as "Kém" instead of "not applicable".
+  // Matches the same format==="Video" && rate>0 filter already used by the
+  // "Best hook" KEY INSIGHTS callout elsewhere in this file.
+  hook_rate: {key: "hook_rate", label: "Hook rate", unitDesc: "tỷ lệ giữ chân 3 giây đầu (video)", higherBetter: true,
+    minOk: r => r.impressions >= 500 && r.format === "Video" && r.hook_rate > 0, minDesc: "creative Video, tối thiểu 500 lượt hiển thị",
+    val: r => fmtPct(r.hook_rate), med: m => fmtPct(m),
+    actions: {good: "mở đầu video đang giữ chân tốt, nên nhân bản cách mở đầu này.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "3 giây đầu chưa hút — nên đổi cách mở đầu video."}},
+  hold_rate: {key: "hold_rate", label: "Hold rate", unitDesc: "tỷ lệ xem hết (video)", higherBetter: true,
+    minOk: r => r.impressions >= 500 && r.format === "Video" && r.hold_rate > 0, minDesc: "creative Video, tối thiểu 500 lượt hiển thị",
+    val: r => fmtPct(r.hold_rate), med: m => fmtPct(m),
+    actions: {good: "nội dung giữ chân người xem tốt, nên nhân bản.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "người xem rời sớm — nên rút ngắn/đổi kịch bản video."}},
+  frequency: {key: "frequency", label: "Frequency", unitDesc: "tần suất lặp lại / người xem", higherBetter: false,
+    minOk: r => r.impressions >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => r.frequency.toFixed(2) + "×", med: m => m.toFixed(2) + "×",
+    actions: {good: "tần suất còn thấp, chưa có dấu hiệu mỏi khán giả.", watch: "tần suất tăng, để ý dấu hiệu mỏi khán giả.", poor: "tần suất cao — khán giả có thể đã mỏi, nên làm mới creative."}},
+};
+const METRIC_OPTS = [["auto", "Tự động"], ["cpi", "CPI"], ["ctr", "CTR"], ["hook_rate", "Hook rate"], ["hold_rate", "Hold rate"], ["frequency", "Frequency"]];
+
+function setCompareMetric(k) { compareMetric = (k === "auto") ? null : k; renderPanel(); }
+
+// Extra display columns on each row — independent from the single ranking
+// metric above (grading Tốt/Khá/Kém only makes sense on one axis at a time),
+// but the reader can freely toggle any number of these on to see them side
+// by side. Pre-checked with Spend + Installs to match the view's original look.
+const DISPLAY_METRICS = [
+  {key: "spend", label: "Spend", val: r => fmtMoney(r.spend)},
+  {key: "installs", label: "Installs", val: r => r.installs ? fmtInt(r.installs) : "–"},
+  {key: "cpi", label: "CPI (₫)", val: r => r.cpi ? fmtVnd(r.cpi_vnd) : "–"},
+  {key: "impressions", label: "Impressions", val: r => fmtInt(r.impressions)},
+  {key: "clicks", label: "Clicks", val: r => fmtInt(r.clicks)},
+  {key: "ctr", label: "CTR", val: r => fmtPct(r.ctr)},
+  {key: "cpc", label: "CPC (₫)", val: r => fmtVndSgd(r.cpc)},
+  {key: "cpm", label: "CPM (₫)", val: r => fmtVndSgd(r.cpm)},
+];
+let compareExtraMetrics = new Set(["spend", "installs"]);
+function toggleCompareExtra(k) {
+  if (compareExtraMetrics.has(k)) compareExtraMetrics.delete(k); else compareExtraMetrics.add(k);
+  renderPanel();
+}
+function extraMetricSwitcherHTML() {
+  return `<div class="controls" style="margin:0 0 12px;flex-wrap:wrap">
+    <span class="ctl-label">Hiện thêm chỉ số:</span>
+    ${DISPLAY_METRICS.map(m => `<button class="ctl${compareExtraMetrics.has(m.key) ? " active" : ""}" onclick="toggleCompareExtra('${m.key}')">${m.label}</button>`).join("")}
+  </div>`;
+}
+
+function median(arr) {
+  if (!arr.length) return 0;
+  const s = arr.slice().sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
+}
+
+// ratio = metric / median. Tiers are wider on the "poor" side because a big
+// blow-up (cost, fatigue) is usually the more actionable/urgent signal than
+// a merely-average creative.
+function gradeCreative(ratio, higherBetter) {
+  if (higherBetter) {
+    if (ratio >= 1.2) return "good";
+    if (ratio >= 0.85) return "ok";
+    if (ratio >= 0.5) return "watch";
+    return "poor";
+  }
+  if (ratio <= 0.8) return "good";
+  if (ratio <= 1.15) return "ok";
+  if (ratio <= 1.6) return "watch";
+  return "poor";
+}
+
+function computeCompareRows(acc) {
+  const metricKey = compareMetric || ((acc.group || "").toUpperCase() === "BRAND" ? "ctr" : "cpi");
+  const metric = METRICS[metricKey];
+  const rows = aggregateByName(acc.creatives);
+  const qualified = rows.filter(metric.minOk);
+  const best = qualified.length ? (metric.higherBetter ? Math.max(...qualified.map(r => r[metric.key])) : Math.min(...qualified.map(r => r[metric.key]))) : 0;
+  // No qualifying creative has a usable value at all (e.g. Hook/Hold rate on
+  // an account with zero video creatives) — that's account-wide "N/A for
+  // this metric", a different message than "too small a sample".
+  const noData = !best;
+  const med = noData ? 0 : median(qualified.map(r => r[metric.key]));
+  // Bar length + median marker share one scale: % of the way to the BEST
+  // creative in this account on this metric (not an absolute 0-100 axis),
+  // so the chart reads as "how close to our own best", same idea for every metric.
+  const toPct = v => (!best || !v) ? 0 : (metric.higherBetter ? Math.max(0, Math.min(100, v / best * 100)) : Math.max(0, Math.min(100, best / v * 100)));
+  const medPct = med ? toPct(med) : 0;
+  const withGrade = rows.map(r => {
+    const ok = !noData && metric.minOk(r);
+    const val = r[metric.key];
+    const ratio = ok && med ? val / med : null;
+    const grade = ok && med ? gradeCreative(ratio, metric.higherBetter) : "na";
+    const barPct = ok ? Math.max(6, toPct(val)) : 6;
+    return {...r, grade, barPct, qualified: ok, noData};
+  });
+  withGrade.sort((a, b) => {
+    const go = GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade];
+    if (go !== 0) return go;
+    return metric.higherBetter ? (b[metric.key] - a[metric.key]) : ((a[metric.key] || Infinity) - (b[metric.key] || Infinity));
+  });
+  return {rows: withGrade, med, metric, medPct, noData};
+}
+
+function compareVerdict(r, med, metric) {
+  if (r.noData) return `Tài khoản này chưa có dữ liệu ${metric.label} phù hợp (vd: không có creative dạng video) — thử chọn metric khác.`;
+  if (!r.qualified) return `Chưa đủ điều kiện so sánh ${metric.label} (cần ${metric.minDesc}).`;
+  if (!med) return "Chưa đủ creative khác trong tài khoản để so sánh.";
+  const val = r[metric.key];
+  const diffPct = Math.abs(val - med) / med * 100;
+  const dirWord = metric.costLike
+    ? (val <= med ? "rẻ hơn" : "đắt hơn")
+    : (metric.higherBetter ? (val >= med ? "cao hơn" : "thấp hơn") : (val <= med ? "thấp hơn" : "cao hơn"));
+  let action = "";
+  if (r.grade === "good") action = " — " + metric.actions.good;
+  else if (r.grade === "watch") action = " — " + metric.actions.watch;
+  else if (r.grade === "poor") action = " — " + metric.actions.poor;
+  let note = "";
+  if (metric.key === "cpi" && r.cpi_d != null && r.cpi_d > 40) note = " ⚠ CPI đang tăng nhanh so với kỳ trước.";
+  if (metric.key === "ctr" && r.ctr_d != null && r.ctr_d < -25) note = " ⚠ CTR đang giảm so với kỳ trước.";
+  return `${metric.label} <b>${metric.val(r)}</b> — ${dirWord} ${diffPct.toFixed(0)}% so với trung vị tài khoản (${metric.med(med)})${action}${note}`;
+}
+
+function compareRowHTML(r, med, metric, medPct, rank) {
+  const nameLink = r.post_url
+    ? `<a href="${r.post_url}" target="_blank" rel="noopener" title="Xem post trên Facebook">${r.name} <span style="opacity:.6">↗</span></a>`
+    : `<span>${r.name}</span>`;
+  const freq = r.frequency ? freqBadge(r.frequency) : "";
+  const medMark = r.qualified && medPct ? `<div class="cmp-med-mark" style="left:${medPct}%" title="Trung vị tài khoản: ${metric.med(med)}"></div>` : "";
+  const extraLines = DISPLAY_METRICS.filter(m => compareExtraMetrics.has(m.key))
+    .map(m => `<div>${m.label} <b>${m.val(r)}</b></div>`).join("");
+  return `<div class="cmp-row grade-${r.grade}">
+    <div class="cmp-rank">#${rank}</div>
+    <div>
+      <div class="cmp-name-line">${nameLink}<span class="cmp-tag">${r.format}</span>${r.ads > 1 ? `<span class="cmp-tag">×${r.ads} ads</span>` : ""}<span class="badge grade-pill ${GRADE_CLASS[r.grade]}">${GRADE_LABEL[r.grade]}</span></div>
+      <div class="cmp-bar-track">${medMark}<div class="cmp-bar-fill" style="width:${r.barPct}%"></div></div>
+      <div class="cmp-verdict">${compareVerdict(r, med, metric)}</div>
+    </div>
+    <div class="cmp-stats-col">
+      ${extraLines}
+      <div>${freq}</div>
+    </div>
+  </div>`;
+}
+
+function metricSwitcherHTML(current) {
+  return `<div class="controls" style="margin:0 0 12px">
+    <span class="ctl-label">So sánh theo:</span>
+    ${METRIC_OPTS.map(([k, l]) => `<button class="ctl${current === k ? " active" : ""}" onclick="setCompareMetric('${k}')">${l}</button>`).join("")}
+  </div>`;
+}
+
+function compareLegendHTML(metric) {
+  return `<div class="cmp-legend">
+    Xếp hạng theo <b>${metric.label}</b> (${metric.unitDesc}) so với <b>trung vị</b> của các creative khác trong tài khoản này (cùng khoảng thời gian) — ${metric.minDesc} để đủ tin cậy. Vạch đứng trên thanh = mức trung vị.<br>
+    <span class="badge grade-pill f-green">Tốt</span> hiệu quả rõ rệt hơn mức chung
+    <span class="badge grade-pill f-blue">Khá</span> xấp xỉ mức chung
+    <span class="badge grade-pill f-amber">Cần chú ý</span> kém hơn, nên theo dõi
+    <span class="badge grade-pill f-red">Kém</span> nên xem xét đổi/tắt
+    <span class="badge grade-pill f-grey">Chưa đủ dữ liệu</span> mẫu quá nhỏ để đánh giá
+  </div>`;
+}
+
+function compareHTML(acc) {
+  const {rows, med, metric, medPct} = computeCompareRows(acc);
+  const current = compareMetric || "auto";
+  const head = metricSwitcherHTML(current) + extraMetricSwitcherHTML();
+  if (!rows.length) return head + `<div class="cmp-empty">Không có creative nào trong khoảng thời gian này.</div>`;
+  return head + compareLegendHTML(metric)
+    + `<div class="cmp-list">` + rows.map((r, i) => compareRowHTML(r, med, metric, medPct, i + 1)).join("") + `</div>`;
+}
+
 // Build the insights + format-breakdown + detail-table HTML for one account
 // (or one campaign section, which is shaped like an account: {label,group,creatives}).
 function accountPanelHTML(acc) {
   const t = accountTotals(acc);
+  if (viewMode === "compare") {
+    return `<div class="panel">
+      <div class="panel-head">
+        <b>${acc.label}</b>
+        <span>Spend ${fmtMoney(t.spend)}</span>
+        <span>Impr ${fmtInt(t.impressions)}</span>
+        <span>Clicks ${fmtInt(t.clicks)}</span>
+        <span>CTR ${fmtPct(t.ctr)}</span>
+        ${t.installs ? `<span>Installs ${fmtInt(t.installs)}</span>` : ""}
+      </div>
+      <div style="padding:16px 18px">${compareHTML(acc)}</div>
+    </div>`;
+  }
   const byFormat = viewMode === "format";
 
   // Detail table (respects the current view + sort).
@@ -1272,7 +1520,7 @@ function applyRangeGoogle(key) {
 function switchPlatform(p) {
   if (p === platform || (p === "google" && !GG) || (p === "funnel" && !FNL)) return;
   platform = p;
-  activeIdx = 0; sortKey = "spend"; sortDir = -1; viewMode = "creative"; showCampaign = false; fnlChannel = "ALL";
+  activeIdx = 0; sortKey = "spend"; sortDir = -1; viewMode = "compare"; showCampaign = false; fnlChannel = "ALL"; compareMetric = null; compareExtraMetrics = new Set(["spend", "installs"]);
   document.getElementById("pf-meta").className = "pf" + (p === "meta" ? " active" : "");
   document.getElementById("pf-google").className = "pf" + (p === "google" ? " active" : "");
   document.getElementById("pf-funnel").className = "pf" + (p === "funnel" ? " active" : "");
@@ -1412,6 +1660,7 @@ Promise.all([
     renderFreshness(d.generated_at);
     const abNote = AB ? "  ·  installs from Airbridge MMP (data through " + (AB.date_range ? AB.date_range[1] : "?") + ")" : "";
     document.getElementById("foot").textContent = "Freq badge:  <3× (ok) · 3–7× (watch) · ≥7× (high)  ·  Group by creative: reach is summed (estimate)  ·  VND @ 1 SGD = " + SGD_TO_VND.toLocaleString("en-US") + "  —  performance data from Meta Marketing API" + abNote;
+    document.getElementById("btn-compare").onclick = () => setView("compare");
     document.getElementById("btn-creative").onclick = () => setView("creative");
     document.getElementById("btn-format").onclick = () => setView("format");
     document.getElementById("btn-perad").onclick = () => setView("ad");
