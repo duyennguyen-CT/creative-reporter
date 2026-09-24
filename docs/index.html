@@ -179,6 +179,11 @@
     <button class="ctl" id="btn-format">By format</button>
     <button class="ctl" id="btn-perad">Per ad</button>
   </div>
+  <div class="controls" id="gg-view-controls" style="display:none">
+    <span class="ctl-label">View:</span>
+    <button class="ctl" id="btn-gg-compare">🏆 So sánh</button>
+    <button class="ctl" id="btn-gg-detail">Chi tiết</button>
+  </div>
   <div id="panel"></div>
 
   <div class="foot" id="foot"></div>
@@ -198,6 +203,8 @@ let DEM = null; // Demand snapshot (docs/data/demand_data.json): raw_retention c
 let FNL = null; // Google PMax + Meta ad cost joined to warehouse funnel metrics (merged from two source files)
 let fnlChannel = "ALL"; // "ALL" | "GOOGLE" | "META" — channel filter for the funnel view only
 let platform = "meta";  // top-level view: "meta" (default) | "google" | "funnel" | "campaign"
+let subViewMode = "compare"; // Google / Funnel view toggle: "compare" | "detail" (mutually exclusive with `platform`, so one var covers both)
+function setSubView(m) { subViewMode = m; renderControls(); renderPanel(); }
 
 // --- Airbridge install override -----------------------------------------
 // Installs come from the Airbridge MMP (last-click attribution), NOT Meta's
@@ -581,8 +588,14 @@ function renderControls() {
   // The By creative / By format / Per ad controls are Meta-specific (Google is
   // already at campaign -> ad group level with a Campaign column). The campaign-
   // name toggle lives in each table's header (rendered in accountPanelHTML).
-  document.getElementById("view-controls").style.display = (platform === "google" || platform === "funnel") ? "none" : "";
-  if (platform === "google" || platform === "funnel") return;
+  const isGgFnl = platform === "google" || platform === "funnel";
+  document.getElementById("view-controls").style.display = isGgFnl ? "none" : "";
+  document.getElementById("gg-view-controls").style.display = isGgFnl ? "" : "none";
+  if (isGgFnl) {
+    document.getElementById("btn-gg-compare").className = "ctl" + (subViewMode === "compare" ? " active" : "");
+    document.getElementById("btn-gg-detail").className = "ctl" + (subViewMode === "detail" ? " active" : "");
+    return;
+  }
   document.getElementById("btn-compare").className = "ctl" + (viewMode === "compare" ? " active" : "");
   document.getElementById("btn-creative").className = "ctl" + (viewMode === "creative" ? " active" : "");
   document.getElementById("btn-format").className = "ctl" + (viewMode === "format" ? " active" : "");
@@ -716,43 +729,47 @@ const METRICS = {
     minOk: r => r.impressions >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
     val: r => fmtPct(r.ctr), med: m => fmtPct(m),
     actions: {good: "content đang hút chú ý, nên nhân bản góc content này.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "nên đổi sang creative/góc content khác."}},
-  // Only Video creatives with a nonzero rate carry a real hook/hold signal —
-  // Image/Carousel/Dynamic ads structurally report 0% (no video_3s/thruplay),
-  // which would otherwise misread as "Kém" instead of "not applicable".
-  // Matches the same format==="Video" && rate>0 filter already used by the
-  // "Best hook" KEY INSIGHTS callout elsewhere in this file.
-  hook_rate: {key: "hook_rate", label: "Hook rate", unitDesc: "tỷ lệ giữ chân 3 giây đầu (video)", higherBetter: true,
-    minOk: r => r.impressions >= 500 && r.format === "Video" && r.hook_rate > 0, minDesc: "creative Video, tối thiểu 500 lượt hiển thị",
-    val: r => fmtPct(r.hook_rate), med: m => fmtPct(m),
-    actions: {good: "mở đầu video đang giữ chân tốt, nên nhân bản cách mở đầu này.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "3 giây đầu chưa hút — nên đổi cách mở đầu video."}},
-  hold_rate: {key: "hold_rate", label: "Hold rate", unitDesc: "tỷ lệ xem hết (video)", higherBetter: true,
-    minOk: r => r.impressions >= 500 && r.format === "Video" && r.hold_rate > 0, minDesc: "creative Video, tối thiểu 500 lượt hiển thị",
-    val: r => fmtPct(r.hold_rate), med: m => fmtPct(m),
-    actions: {good: "nội dung giữ chân người xem tốt, nên nhân bản.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "người xem rời sớm — nên rút ngắn/đổi kịch bản video."}},
-  frequency: {key: "frequency", label: "Frequency", unitDesc: "tần suất lặp lại / người xem", higherBetter: false,
+  spend: {key: "spend", label: "Spend", unitDesc: "mức chi tiêu", higherBetter: true,
     minOk: r => r.impressions >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
-    val: r => r.frequency.toFixed(2) + "×", med: m => m.toFixed(2) + "×",
-    actions: {good: "tần suất còn thấp, chưa có dấu hiệu mỏi khán giả.", watch: "tần suất tăng, để ý dấu hiệu mỏi khán giả.", poor: "tần suất cao — khán giả có thể đã mỏi, nên làm mới creative."}},
+    val: r => fmtVnd(r.spend_vnd), med: m => fmtVnd(m * SGD_TO_VND),
+    actions: {good: "đang được phân bổ ngân sách nhiều nhất — nên theo dõi CPI/CTR đi kèm để đảm bảo hiệu quả tương xứng.", watch: "mức chi ở mức trung bình, chưa có gì bất thường.", poor: "mức chi thấp hơn hẳn — có thể mới chạy hoặc đang bị giới hạn ngân sách."}},
+  installs: {key: "installs", label: "Installs", unitDesc: "số lượt cài đặt", higherBetter: true,
+    minOk: r => r.impressions >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtInt(r.installs), med: m => fmtInt(Math.round(m)),
+    actions: {good: "đang mang về nhiều lượt cài đặt nhất — nên cân nhắc nhân rộng/tăng ngân sách.", watch: "số lượt cài đặt ở mức trung bình.", poor: "số lượt cài đặt thấp hơn hẳn — nên xem lại targeting hoặc creative."}},
+  impressions: {key: "impressions", label: "Impressions", unitDesc: "số lượt hiển thị", higherBetter: true,
+    minOk: r => r.impressions >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtInt(r.impressions), med: m => fmtInt(Math.round(m)),
+    actions: {good: "đang được hiển thị nhiều nhất — kiểm tra thêm CTR để chắc content vẫn hút chú ý ở quy mô lớn.", watch: "số lượt hiển thị ở mức trung bình.", poor: "số lượt hiển thị thấp hơn hẳn — có thể do ngân sách/targeting hẹp."}},
+  clicks: {key: "clicks", label: "Clicks", unitDesc: "số lượt click", higherBetter: true,
+    minOk: r => r.impressions >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtInt(r.clicks), med: m => fmtInt(Math.round(m)),
+    actions: {good: "đang thu hút nhiều click nhất, nên tận dụng nhân rộng góc content này.", watch: "số lượt click ở mức trung bình.", poor: "số lượt click thấp hơn hẳn — nên xem lại content/targeting."}},
+  cpc: {key: "cpc", label: "CPC", unitDesc: "chi phí / click", higherBetter: false, costLike: true,
+    minOk: r => r.impressions >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtVndSgd(r.cpc), med: m => fmtVndSgd(m),
+    actions: {good: "chi phí mỗi click thấp, hiệu quả — đáng cân nhắc tăng ngân sách.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "chi phí mỗi click cao — nên xem lại targeting/creative."}},
+  cpm: {key: "cpm", label: "CPM", unitDesc: "chi phí / 1000 lượt hiển thị", higherBetter: false, costLike: true,
+    minOk: r => r.impressions >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtVndSgd(r.cpm), med: m => fmtVndSgd(m),
+    actions: {good: "chi phí hiển thị thấp, hiệu quả — đáng cân nhắc tăng ngân sách.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "chi phí hiển thị cao — nên xem lại targeting/đặt giá thầu."}},
 };
-const METRIC_OPTS = [["auto", "Tự động"], ["cpi", "CPI"], ["ctr", "CTR"], ["hook_rate", "Hook rate"], ["hold_rate", "Hold rate"], ["frequency", "Frequency"]];
+const METRIC_OPTS = [["auto", "Tự động"], ["spend", "Spend"], ["installs", "Installs"], ["cpi", "CPI"], ["impressions", "Impressions"], ["clicks", "Clicks"], ["ctr", "CTR"], ["cpc", "CPC"], ["cpm", "CPM"]];
 
 function setCompareMetric(k) { compareMetric = (k === "auto") ? null : k; renderPanel(); }
 
 // Extra display columns on each row — independent from the single ranking
 // metric above (grading Tốt/Khá/Kém only makes sense on one axis at a time),
 // but the reader can freely toggle any number of these on to see them side
-// by side. Pre-checked with Spend + Installs to match the view's original look.
+// by side. Pre-checked with CPI + CTR to match the view's original look.
 const DISPLAY_METRICS = [
-  {key: "spend", label: "Spend", val: r => fmtMoney(r.spend)},
-  {key: "installs", label: "Installs", val: r => r.installs ? fmtInt(r.installs) : "–"},
   {key: "cpi", label: "CPI (₫)", val: r => r.cpi ? fmtVnd(r.cpi_vnd) : "–"},
-  {key: "impressions", label: "Impressions", val: r => fmtInt(r.impressions)},
-  {key: "clicks", label: "Clicks", val: r => fmtInt(r.clicks)},
   {key: "ctr", label: "CTR", val: r => fmtPct(r.ctr)},
-  {key: "cpc", label: "CPC (₫)", val: r => fmtVndSgd(r.cpc)},
-  {key: "cpm", label: "CPM (₫)", val: r => fmtVndSgd(r.cpm)},
+  {key: "hook_rate", label: "Hook rate", val: r => fmtDash(fmtPct)(r.hook_rate)},
+  {key: "hold_rate", label: "Hold rate", val: r => fmtDash(fmtPct)(r.hold_rate)},
+  {key: "frequency", label: "Frequency", val: r => r.frequency ? r.frequency.toFixed(2) + "×" : "–"},
 ];
-let compareExtraMetrics = new Set(["spend", "installs"]);
+let compareExtraMetrics = new Set(["cpi", "ctr"]);
 function toggleCompareExtra(k) {
   if (compareExtraMetrics.has(k)) compareExtraMetrics.delete(k); else compareExtraMetrics.add(k);
   renderPanel();
@@ -1250,8 +1267,157 @@ function computeGoogleAccountInsights(acc) {
   return out;
 }
 
+// --- Google "So sánh" (Compare) — same Tốt/Khá/Cần chú ý/Kém leaderboard as
+// Meta, adapted to Google's flat ad-group rows: VND-native (no SGD/₫
+// conversion needed), no hook/hold/frequency/post_url. Reuses the generic
+// median()/gradeCreative()/GRADE_* helpers defined above for Meta.
+const GG_METRICS = {
+  spend: {key: "spend", label: "Spend", unitDesc: "mức chi tiêu", higherBetter: true,
+    minOk: r => (r.impressions || 0) >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtVnd(r.spend), med: m => fmtVnd(m),
+    actions: {good: "đang được phân bổ ngân sách nhiều nhất — nên theo dõi CPI/CTR đi kèm để đảm bảo hiệu quả tương xứng.", watch: "mức chi ở mức trung bình, chưa có gì bất thường.", poor: "mức chi thấp hơn hẳn — có thể mới chạy hoặc đang bị giới hạn ngân sách."}},
+  installs: {key: "installs", label: "Installs", unitDesc: "số lượt cài đặt", higherBetter: true,
+    minOk: r => (r.impressions || 0) >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtInt(r.installs), med: m => fmtInt(Math.round(m)),
+    actions: {good: "đang mang về nhiều lượt cài đặt nhất — nên cân nhắc nhân rộng/tăng ngân sách.", watch: "số lượt cài đặt ở mức trung bình.", poor: "số lượt cài đặt thấp hơn hẳn — nên xem lại từ khóa/quảng cáo."}},
+  cpi: {key: "cpi", label: "CPI", unitDesc: "chi phí / lượt cài đặt", higherBetter: false, costLike: true,
+    minOk: r => (r.installs || 0) >= 5 && r.cpi > 0, minDesc: "tối thiểu 5 lượt cài đặt",
+    val: r => fmtVnd(r.cpi), med: m => fmtVnd(m),
+    actions: {good: "hiệu quả, đáng cân nhắc tăng ngân sách.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "cân nhắc tắt hoặc thay ad group/từ khóa."}},
+  impressions: {key: "impressions", label: "Impressions", unitDesc: "số lượt hiển thị", higherBetter: true,
+    minOk: r => (r.impressions || 0) >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtInt(r.impressions), med: m => fmtInt(Math.round(m)),
+    actions: {good: "đang được hiển thị nhiều nhất — kiểm tra thêm CTR để chắc từ khóa/quảng cáo vẫn hút chú ý ở quy mô lớn.", watch: "số lượt hiển thị ở mức trung bình.", poor: "số lượt hiển thị thấp hơn hẳn — có thể do ngân sách/từ khóa hẹp."}},
+  clicks: {key: "clicks", label: "Clicks", unitDesc: "số lượt click", higherBetter: true,
+    minOk: r => (r.impressions || 0) >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtInt(r.clicks), med: m => fmtInt(Math.round(m)),
+    actions: {good: "đang thu hút nhiều click nhất, đáng tham khảo nhân rộng.", watch: "số lượt click ở mức trung bình.", poor: "số lượt click thấp hơn hẳn — nên xem lại từ khóa/quảng cáo."}},
+  ctr: {key: "ctr", label: "CTR", unitDesc: "tỷ lệ click", higherBetter: true,
+    minOk: r => (r.impressions || 0) >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtPct(r.ctr), med: m => fmtPct(m),
+    actions: {good: "hiệu quả thu hút click tốt, đáng tham khảo nhân rộng.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "CTR thấp — nên xem lại từ khóa/quảng cáo."}},
+  cpc: {key: "cpc", label: "CPC", unitDesc: "chi phí / click", higherBetter: false, costLike: true,
+    minOk: r => (r.impressions || 0) >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtVnd(r.cpc), med: m => fmtVnd(m),
+    actions: {good: "chi phí mỗi click thấp, hiệu quả — đáng cân nhắc tăng ngân sách.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "chi phí mỗi click cao — nên xem lại từ khóa/quảng cáo."}},
+  cpm: {key: "cpm", label: "CPM", unitDesc: "chi phí / 1000 lượt hiển thị", higherBetter: false, costLike: true,
+    minOk: r => (r.impressions || 0) >= 500, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtVnd(r.cpm), med: m => fmtVnd(m),
+    actions: {good: "chi phí hiển thị thấp, hiệu quả — đáng cân nhắc tăng ngân sách.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "chi phí hiển thị cao — nên xem lại từ khóa/đặt giá thầu."}},
+};
+const GG_METRIC_OPTS = [["spend", "Spend"], ["installs", "Installs"], ["cpi", "CPI"], ["impressions", "Impressions"], ["clicks", "Clicks"], ["ctr", "CTR"], ["cpc", "CPC"], ["cpm", "CPM"]];
+let ggCompareMetric = "cpi";
+function setGgCompareMetric(k) { ggCompareMetric = k; renderPanel(); }
+
+const GG_DISPLAY_METRICS = [
+  {key: "cpi", label: "CPI (₫)", val: r => r.cpi ? fmtVnd(r.cpi) : "–"},
+  {key: "ctr", label: "CTR", val: r => fmtPct(r.ctr)},
+];
+let ggCompareExtras = new Set(["cpi", "ctr"]);
+function toggleGgExtra(k) { if (ggCompareExtras.has(k)) ggCompareExtras.delete(k); else ggCompareExtras.add(k); renderPanel(); }
+
+function ggComputeCompareRows(rows) {
+  const metric = GG_METRICS[ggCompareMetric];
+  const qualified = rows.filter(metric.minOk);
+  const best = qualified.length ? (metric.higherBetter ? Math.max(...qualified.map(r => r[metric.key])) : Math.min(...qualified.map(r => r[metric.key]))) : 0;
+  const noData = !best;
+  const med = noData ? 0 : median(qualified.map(r => r[metric.key]));
+  const toPct = v => (!best || !v) ? 0 : (metric.higherBetter ? Math.max(0, Math.min(100, v / best * 100)) : Math.max(0, Math.min(100, best / v * 100)));
+  const medPct = med ? toPct(med) : 0;
+  const withGrade = rows.map(r => {
+    const ok = !noData && metric.minOk(r);
+    const val = r[metric.key];
+    const ratio = ok && med ? val / med : null;
+    const grade = ok && med ? gradeCreative(ratio, metric.higherBetter) : "na";
+    const barPct = ok ? Math.max(6, toPct(val)) : 6;
+    return {...r, grade, barPct, qualified: ok, noData};
+  });
+  withGrade.sort((a, b) => {
+    const go = GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade];
+    if (go !== 0) return go;
+    return metric.higherBetter ? (b[metric.key] - a[metric.key]) : ((a[metric.key] || Infinity) - (b[metric.key] || Infinity));
+  });
+  return {rows: withGrade, med, metric, medPct};
+}
+
+function ggCompareVerdict(r, med, metric) {
+  if (r.noData) return `Tài khoản này chưa có dữ liệu ${metric.label} phù hợp — thử chọn metric khác.`;
+  if (!r.qualified) return `Chưa đủ điều kiện so sánh ${metric.label} (cần ${metric.minDesc}).`;
+  if (!med) return "Chưa đủ ad group khác trong tài khoản để so sánh.";
+  const val = r[metric.key];
+  const diffPct = Math.abs(val - med) / med * 100;
+  const dirWord = metric.costLike
+    ? (val <= med ? "rẻ hơn" : "đắt hơn")
+    : (metric.higherBetter ? (val >= med ? "cao hơn" : "thấp hơn") : (val <= med ? "thấp hơn" : "cao hơn"));
+  let action = "";
+  if (r.grade === "good") action = " — " + metric.actions.good;
+  else if (r.grade === "watch") action = " — " + metric.actions.watch;
+  else if (r.grade === "poor") action = " — " + metric.actions.poor;
+  let note = "";
+  if (metric.key === "cpi" && r.cpi_d != null && r.cpi_d > 40) note = " ⚠ CPI đang tăng nhanh so với kỳ trước.";
+  if (metric.key === "ctr" && r.ctr_d != null && r.ctr_d < -25) note = " ⚠ CTR đang giảm so với kỳ trước.";
+  return `${metric.label} <b>${metric.val(r)}</b> — ${dirWord} ${diffPct.toFixed(0)}% so với trung vị tài khoản (${metric.med(med)})${action}${note}`;
+}
+
+function ggCompareRowHTML(r, med, metric, medPct, rank) {
+  const medMark = r.qualified && medPct ? `<div class="cmp-med-mark" style="left:${medPct}%" title="Trung vị tài khoản: ${metric.med(med)}"></div>` : "";
+  const extraLines = GG_DISPLAY_METRICS.filter(m => ggCompareExtras.has(m.key)).map(m => `<div>${m.label} <b>${m.val(r)}</b></div>`).join("");
+  return `<div class="cmp-row grade-${r.grade}">
+    <div class="cmp-rank">#${rank}</div>
+    <div>
+      <div class="cmp-name-line"><span>${r.name}</span><span class="cmp-tag">${r.campaign}</span><span class="badge grade-pill ${GRADE_CLASS[r.grade]}">${GRADE_LABEL[r.grade]}</span></div>
+      <div class="cmp-bar-track">${medMark}<div class="cmp-bar-fill" style="width:${r.barPct}%"></div></div>
+      <div class="cmp-verdict">${ggCompareVerdict(r, med, metric)}</div>
+    </div>
+    <div class="cmp-stats-col">${extraLines}</div>
+  </div>`;
+}
+
+function ggMetricSwitcherHTML(current) {
+  return `<div class="controls" style="margin:0 0 12px">
+    <span class="ctl-label">So sánh theo:</span>
+    ${GG_METRIC_OPTS.map(([k, l]) => `<button class="ctl${current === k ? " active" : ""}" onclick="setGgCompareMetric('${k}')">${l}</button>`).join("")}
+  </div>`;
+}
+function ggExtraMetricSwitcherHTML() {
+  return `<div class="controls" style="margin:0 0 12px;flex-wrap:wrap">
+    <span class="ctl-label">Hiện thêm chỉ số:</span>
+    ${GG_DISPLAY_METRICS.map(m => `<button class="ctl${ggCompareExtras.has(m.key) ? " active" : ""}" onclick="toggleGgExtra('${m.key}')">${m.label}</button>`).join("")}
+  </div>`;
+}
+function ggCompareLegendHTML(metric) {
+  return `<div class="cmp-legend">
+    Xếp hạng theo <b>${metric.label}</b> (${metric.unitDesc}) so với <b>trung vị</b> của các ad group khác trong tài khoản này (cùng khoảng thời gian) — ${metric.minDesc} để đủ tin cậy. Vạch đứng trên thanh = mức trung vị.<br>
+    <span class="badge grade-pill f-green">Tốt</span> hiệu quả rõ rệt hơn mức chung
+    <span class="badge grade-pill f-blue">Khá</span> xấp xỉ mức chung
+    <span class="badge grade-pill f-amber">Cần chú ý</span> kém hơn, nên theo dõi
+    <span class="badge grade-pill f-red">Kém</span> nên xem xét đổi/tắt
+    <span class="badge grade-pill f-grey">Chưa đủ dữ liệu</span> mẫu quá nhỏ để đánh giá
+  </div>`;
+}
+function ggCompareHTML(rows) {
+  const {rows: graded, med, metric, medPct} = ggComputeCompareRows(rows);
+  const head = ggMetricSwitcherHTML(ggCompareMetric) + ggExtraMetricSwitcherHTML();
+  if (!graded.length) return head + `<div class="cmp-empty">Không có ad group nào trong khoảng thời gian này.</div>`;
+  return head + ggCompareLegendHTML(metric)
+    + `<div class="cmp-list">` + graded.map((r, i) => ggCompareRowHTML(r, med, metric, medPct, i + 1)).join("") + `</div>`;
+}
+
 function googleAccountPanelHTML(acc) {
   const t = ggTotals(acc.creatives);
+  if (subViewMode === "compare") {
+    return `<div class="panel">
+      <div class="panel-head">
+        <b>${acc.label}</b>
+        <span>Spend ${fmtVnd(t.spend)}</span>
+        <span>Impr ${fmtInt(t.impressions)}</span>
+        <span>Clicks ${fmtInt(t.clicks)}</span>
+        <span>CTR ${fmtPct(t.ctr)}</span>
+        ${t.installs ? `<span>Installs ${fmtInt(t.installs)} @ CPI ${fmtVnd(t.cpi)}</span>` : ""}
+      </div>
+      <div style="padding:16px 18px">${ggCompareHTML(acc.creatives)}</div>
+    </div>`;
+  }
   const rows = acc.creatives.slice().sort((a, b) => {
     const x = a[sortKey], y = b[sortKey];
     if (typeof x === "string") return sortDir * String(x).localeCompare(String(y));
@@ -1486,12 +1652,147 @@ function renderFunnelCards() {
   document.getElementById("cards").innerHTML = cards.map(c => `<div class="card"><div class="k">${c.k}</div><div class="v">${c.v}</div></div>`).join("");
 }
 
+// --- Funnel "So sánh" (Compare) — same leaderboard pattern, adapted to the
+// Google+Meta funnel's own goal: cost per DWL (mature 14d), since this view
+// tracks Drive-DAU/lead campaigns rather than installs. cpdwl/ctr can be
+// `null` (sumKnown returns null when nothing is known yet, not 0) — minOk
+// guards on that before any arithmetic touches them.
+const FNL_METRICS = {
+  spend: {key: "spend", label: "Spend", unitDesc: "mức chi tiêu", higherBetter: true,
+    minOk: r => (r.spend || 0) > 0, minDesc: "có phát sinh chi tiêu",
+    val: r => fmtDash(fmtVnd)(r.spend), med: m => fmtVnd(m),
+    actions: {good: "đang được phân bổ ngân sách nhiều nhất — nên theo dõi CP-DWL đi kèm để đảm bảo hiệu quả tương xứng.", watch: "mức chi ở mức trung bình, chưa có gì bất thường.", poor: "mức chi thấp hơn hẳn — có thể mới chạy hoặc đang bị giới hạn ngân sách."}},
+  dau: {key: "dau", label: "DAU", unitDesc: "số DAU", higherBetter: true,
+    minOk: r => (r.dau || 0) > 0, minDesc: "có phát sinh DAU",
+    val: r => fmtDash(fmtInt)(r.dau), med: m => fmtInt(Math.round(m)),
+    actions: {good: "đang mang về nhiều DAU nhất trong lát cắt này.", watch: "số DAU ở mức trung bình.", poor: "số DAU thấp hơn hẳn — nên xem lại target/creative."}},
+  dwa: {key: "dwa", label: "DWA", unitDesc: "số DWA", higherBetter: true,
+    minOk: r => (r.dwa || 0) > 0, minDesc: "có phát sinh DWA",
+    val: r => fmtDash(fmtInt)(r.dwa), med: m => fmtInt(Math.round(m)),
+    actions: {good: "đang mang về nhiều DWA nhất trong lát cắt này.", watch: "số DWA ở mức trung bình.", poor: "số DWA thấp hơn hẳn — nên xem lại target/creative."}},
+  dwl: {key: "dwl", label: "DWL (mature)", unitDesc: "số DWL (mature 14d)", higherBetter: true,
+    minOk: r => (r.dwl || 0) >= 5, minDesc: "tối thiểu 5 DWL (mature)",
+    val: r => fmtDash(fmtInt)(r.dwl), med: m => fmtInt(Math.round(m)),
+    actions: {good: "đang mang về nhiều DWL nhất — nên cân nhắc nhân rộng/tăng ngân sách.", watch: "số DWL ở mức trung bình.", poor: "số DWL thấp hơn hẳn — nên xem lại target/creative."}},
+  lead: {key: "lead", label: "Lead (mature)", unitDesc: "số Lead (mature 14d)", higherBetter: true,
+    minOk: r => (r.lead || 0) > 0, minDesc: "có phát sinh Lead",
+    val: r => fmtDash(fmtInt)(r.lead), med: m => fmtInt(Math.round(m)),
+    actions: {good: "đang mang về nhiều Lead nhất — nên cân nhắc nhân rộng/tăng ngân sách.", watch: "số Lead ở mức trung bình.", poor: "số Lead thấp hơn hẳn — nên xem lại target/creative."}},
+  ctr: {key: "ctr", label: "CTR", unitDesc: "tỷ lệ click", higherBetter: true,
+    minOk: r => (r.impressions || 0) >= 500 && r.ctr > 0, minDesc: "tối thiểu 500 lượt hiển thị",
+    val: r => fmtDash(fmtPct)(r.ctr), med: m => fmtPct(m),
+    actions: {good: "hiệu quả thu hút click tốt.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "CTR thấp — nên xem lại target/creative."}},
+  cpdwl: {key: "cpdwl", label: "CP-DWL", unitDesc: "chi phí / DWL (mature 14d)", higherBetter: false, costLike: true,
+    minOk: r => (r.dwl || 0) >= 5 && r.cpdwl > 0, minDesc: "tối thiểu 5 DWL (mature)",
+    val: r => fmtDash(fmtVnd)(r.cpdwl), med: m => fmtVnd(m),
+    actions: {good: "hiệu quả, đáng cân nhắc tăng ngân sách.", watch: "theo dõi thêm, chưa cần thay ngay.", poor: "cân nhắc tắt hoặc thay campaign/asset."}},
+};
+const FNL_METRIC_OPTS = [["spend", "Spend"], ["dau", "DAU"], ["dwa", "DWA"], ["dwl", "DWL"], ["lead", "Lead"], ["ctr", "CTR"], ["cpdwl", "CP-DWL"]];
+let fnlCompareMetric = "cpdwl";
+function setFnlCompareMetric(k) { fnlCompareMetric = k; renderPanel(); }
+
+const FNL_DISPLAY_METRICS = [
+  {key: "ctr", label: "CTR", val: r => fmtDash(fmtPct)(r.ctr)},
+  {key: "cpdwl", label: "CP-DWL (₫)", val: r => fmtDash(fmtVnd)(r.cpdwl)},
+];
+let fnlCompareExtras = new Set(["ctr", "cpdwl"]);
+function toggleFnlExtra(k) { if (fnlCompareExtras.has(k)) fnlCompareExtras.delete(k); else fnlCompareExtras.add(k); renderPanel(); }
+
+function fnlComputeCompareRows(rows) {
+  const metric = FNL_METRICS[fnlCompareMetric];
+  const qualified = rows.filter(metric.minOk);
+  const best = qualified.length ? (metric.higherBetter ? Math.max(...qualified.map(r => r[metric.key])) : Math.min(...qualified.map(r => r[metric.key]))) : 0;
+  const noData = !best;
+  const med = noData ? 0 : median(qualified.map(r => r[metric.key]));
+  const toPct = v => (!best || !v) ? 0 : (metric.higherBetter ? Math.max(0, Math.min(100, v / best * 100)) : Math.max(0, Math.min(100, best / v * 100)));
+  const medPct = med ? toPct(med) : 0;
+  const withGrade = rows.map(r => {
+    const ok = !noData && metric.minOk(r);
+    const val = r[metric.key];
+    const ratio = ok && med ? val / med : null;
+    const grade = ok && med ? gradeCreative(ratio, metric.higherBetter) : "na";
+    const barPct = ok ? Math.max(6, toPct(val)) : 6;
+    return {...r, grade, barPct, qualified: ok, noData};
+  });
+  withGrade.sort((a, b) => {
+    const go = GRADE_ORDER[a.grade] - GRADE_ORDER[b.grade];
+    if (go !== 0) return go;
+    return metric.higherBetter ? ((b[metric.key] || 0) - (a[metric.key] || 0)) : ((a[metric.key] || Infinity) - (b[metric.key] || Infinity));
+  });
+  return {rows: withGrade, med, metric, medPct};
+}
+
+function fnlCompareVerdict(r, med, metric) {
+  if (r.noData) return `Chưa có dữ liệu ${metric.label} phù hợp trong lát cắt này — thử chọn metric khác.`;
+  if (!r.qualified) return `Chưa đủ điều kiện so sánh ${metric.label} (cần ${metric.minDesc}).`;
+  if (!med) return "Chưa đủ dòng khác trong lát cắt này để so sánh.";
+  const val = r[metric.key];
+  const diffPct = Math.abs(val - med) / med * 100;
+  const dirWord = metric.costLike
+    ? (val <= med ? "rẻ hơn" : "đắt hơn")
+    : (metric.higherBetter ? (val >= med ? "cao hơn" : "thấp hơn") : (val <= med ? "thấp hơn" : "cao hơn"));
+  let action = "";
+  if (r.grade === "good") action = " — " + metric.actions.good;
+  else if (r.grade === "watch") action = " — " + metric.actions.watch;
+  else if (r.grade === "poor") action = " — " + metric.actions.poor;
+  return `${metric.label} <b>${metric.val(r)}</b> — ${dirWord} ${diffPct.toFixed(0)}% so với trung vị (${metric.med(med)})${action}`;
+}
+
+function fnlCompareRowHTML(r, med, metric, medPct, rank) {
+  const medMark = r.qualified && medPct ? `<div class="cmp-med-mark" style="left:${medPct}%" title="Trung vị: ${metric.med(med)}"></div>` : "";
+  const extraLines = FNL_DISPLAY_METRICS.filter(m => fnlCompareExtras.has(m.key)).map(m => `<div>${m.label} <b>${m.val(r)}</b></div>`).join("");
+  return `<div class="cmp-row grade-${r.grade}">
+    <div class="cmp-rank">#${rank}</div>
+    <div>
+      <div class="cmp-name-line"><span>${r.name}</span><span class="cmp-tag">${r.platform}</span><span class="cmp-tag">${r.campaign}</span><span class="badge grade-pill ${GRADE_CLASS[r.grade]}">${GRADE_LABEL[r.grade]}</span></div>
+      <div class="cmp-bar-track">${medMark}<div class="cmp-bar-fill" style="width:${r.barPct}%"></div></div>
+      <div class="cmp-verdict">${fnlCompareVerdict(r, med, metric)}</div>
+    </div>
+    <div class="cmp-stats-col">${extraLines}</div>
+  </div>`;
+}
+
+function fnlMetricSwitcherHTML(current) {
+  return `<div class="controls" style="margin:0 0 12px">
+    <span class="ctl-label">So sánh theo:</span>
+    ${FNL_METRIC_OPTS.map(([k, l]) => `<button class="ctl${current === k ? " active" : ""}" onclick="setFnlCompareMetric('${k}')">${l}</button>`).join("")}
+  </div>`;
+}
+function fnlExtraMetricSwitcherHTML() {
+  return `<div class="controls" style="margin:0 0 12px;flex-wrap:wrap">
+    <span class="ctl-label">Hiện thêm chỉ số:</span>
+    ${FNL_DISPLAY_METRICS.map(m => `<button class="ctl${fnlCompareExtras.has(m.key) ? " active" : ""}" onclick="toggleFnlExtra('${m.key}')">${m.label}</button>`).join("")}
+  </div>`;
+}
+function fnlCompareLegendHTML(metric) {
+  return `<div class="cmp-legend">
+    Xếp hạng theo <b>${metric.label}</b> (${metric.unitDesc}) so với <b>trung vị</b> của các dòng khác trong lát cắt này (cùng khoảng thời gian, cùng vertical/channel đang chọn) — ${metric.minDesc} để đủ tin cậy. Vạch đứng trên thanh = mức trung vị.<br>
+    <span class="badge grade-pill f-green">Tốt</span> hiệu quả rõ rệt hơn mức chung
+    <span class="badge grade-pill f-blue">Khá</span> xấp xỉ mức chung
+    <span class="badge grade-pill f-amber">Cần chú ý</span> kém hơn, nên theo dõi
+    <span class="badge grade-pill f-red">Kém</span> nên xem xét đổi/tắt
+    <span class="badge grade-pill f-grey">Chưa đủ dữ liệu</span> mẫu quá nhỏ để đánh giá
+  </div>`;
+}
+function fnlCompareHTML(rows) {
+  const {rows: graded, med, metric, medPct} = fnlComputeCompareRows(rows);
+  const head = fnlMetricSwitcherHTML(fnlCompareMetric) + fnlExtraMetricSwitcherHTML();
+  if (!graded.length) return head + `<div class="cmp-empty">Không có dòng nào trong khoảng thời gian này.</div>`;
+  return head + fnlCompareLegendHTML(metric)
+    + `<div class="cmp-list">` + graded.map((r, i) => fnlCompareRowHTML(r, med, metric, medPct, i + 1)).join("") + `</div>`;
+}
+
 function funnelPanelHTML(tab) {
   const rows = funnelWindow(curRange, tab.vertical).sort((a, b) => (b.spend || 0) - (a.spend || 0));
   const t = funnelTotals(rows);
   if (!rows.length) return `<div class="panel"><div class="empty">No Google Creative Funnel data is loaded for this period yet.</div></div>`;
-  return `<div class="camp-note">📌 Showing Google asset groups + Meta ads with positive spend only. “Mature 14d” excludes recent cohorts that have not had a full 14-day lead window. VEH Meta rows have no cost source yet, so they won't appear here (spend filter) — see the vertical tab for funnel-only rows. Source data retains unattributed and zero-spend rows for QA.</div>
-    <div class="panel"><div class="panel-head"><b>${tab.label}</b><span>Spend ${fmtDash(fmtVnd)(t.spend)}</span><span>DAU ${fmtDash(fmtInt)(t.dau)}</span><span>DWL ${fmtDash(fmtInt)(t.dwl)}</span><span>${rows.length} rows</span></div>${tableHTML(rows, FCOLS, true)}</div>`;
+  const note = `<div class="camp-note">📌 Showing Google asset groups + Meta ads with positive spend only. “Mature 14d” excludes recent cohorts that have not had a full 14-day lead window. VEH Meta rows have no cost source yet, so they won't appear here (spend filter) — see the vertical tab for funnel-only rows. Source data retains unattributed and zero-spend rows for QA.</div>`;
+  if (subViewMode === "compare") {
+    return note + `<div class="panel"><div class="panel-head"><b>${tab.label}</b><span>Spend ${fmtDash(fmtVnd)(t.spend)}</span><span>DAU ${fmtDash(fmtInt)(t.dau)}</span><span>DWL ${fmtDash(fmtInt)(t.dwl)}</span></div>`
+      + `<div style="padding:16px 18px">${fnlCompareHTML(rows)}</div></div>`;
+  }
+  return note
+    + `<div class="panel"><div class="panel-head"><b>${tab.label}</b><span>Spend ${fmtDash(fmtVnd)(t.spend)}</span><span>DAU ${fmtDash(fmtInt)(t.dau)}</span><span>DWL ${fmtDash(fmtInt)(t.dwl)}</span><span>${rows.length} rows</span></div>${tableHTML(rows, FCOLS, true)}</div>`;
 }
 
 function applyRangeFunnel(key) {
@@ -1520,7 +1821,8 @@ function applyRangeGoogle(key) {
 function switchPlatform(p) {
   if (p === platform || (p === "google" && !GG) || (p === "funnel" && !FNL)) return;
   platform = p;
-  activeIdx = 0; sortKey = "spend"; sortDir = -1; viewMode = "compare"; showCampaign = false; fnlChannel = "ALL"; compareMetric = null; compareExtraMetrics = new Set(["spend", "installs"]);
+  activeIdx = 0; sortKey = "spend"; sortDir = -1; viewMode = "compare"; showCampaign = false; fnlChannel = "ALL"; compareMetric = null; compareExtraMetrics = new Set(["cpi", "ctr"]);
+  subViewMode = "compare"; ggCompareMetric = "cpi"; ggCompareExtras = new Set(["cpi", "ctr"]); fnlCompareMetric = "cpdwl"; fnlCompareExtras = new Set(["ctr", "cpdwl"]);
   document.getElementById("pf-meta").className = "pf" + (p === "meta" ? " active" : "");
   document.getElementById("pf-google").className = "pf" + (p === "google" ? " active" : "");
   document.getElementById("pf-funnel").className = "pf" + (p === "funnel" ? " active" : "");
@@ -1664,6 +1966,8 @@ Promise.all([
     document.getElementById("btn-creative").onclick = () => setView("creative");
     document.getElementById("btn-format").onclick = () => setView("format");
     document.getElementById("btn-perad").onclick = () => setView("ad");
+    document.getElementById("btn-gg-compare").onclick = () => setSubView("compare");
+    document.getElementById("btn-gg-detail").onclick = () => setSubView("detail");
     // (The campaign-name toggle is rendered inside each table header with an
     // inline onclick=toggleCampaign(), so no wiring is needed here.)
 
